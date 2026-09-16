@@ -1,0 +1,7 @@
+vendor/
+temp/
+config.local.env
+.generated/
+.state/
+__pycache__/
+*.egg-info/
