@@ -1,0 +1,52 @@
+# Cilium Helm values (static part). Environment-specific values are passed with
+# --set by scripts/install/20-cilium.sh (API endpoint, routing, LB mode, seed).
+
+kubeProxyReplacement: true
+
+# Roll agents/operator automatically when their ConfigMap changes.
+rollOutCiliumPods: true
+operator:
+  rollOutPods: true
+
+ipam:
+  mode: kubernetes          # use the podCIDR k3s assigns to each node
+
+bpf:
+  masquerade: true
+
+# With flannel-backend=none, k3s writes no CNI section into its containerd
+# config, so containerd uses the defaults /etc/cni/net.d and /opt/cni/bin —
+# the chart defaults. (The /var/lib/rancher/k3s/... paths are flannel-only.)
+cni:
+  exclusive: true           # disables other CNI conflists in /etc/cni/net.d
+
+loadBalancer:
+  algorithm: maglev         # consistent hashing: minimal reshuffle when TBMQ pods change
+
+# LB-IPAM is always on; L2 announcements are enabled here but only act when a
+# CiliumL2AnnouncementPolicy exists (L2_ANNOUNCE=true).
+l2announcements:
+  enabled: true
+k8sClientRateLimit:         # L2 announcements renew one Lease per service
+  qps: 30
+  burst: 60
+
+# Envoy Gateway owns Gateway API; avoid a second controller.
+gatewayAPI:
+  enabled: false
+ingressController:
+  enabled: false
+
+# Agent metrics :9962 (operator :9963 and cilium-envoy :9964 are on by default); scraped by
+# deploy/observability/scrapes.yaml.
+prometheus:
+  enabled: true
+
+hubble:
+  enabled: true
+  metrics:
+    enabled: [dns, drop, tcp, flow, icmp]   # :9965, no context labels (low cardinality)
+  relay:
+    enabled: true
+  ui:
+    enabled: true
