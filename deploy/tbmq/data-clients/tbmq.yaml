@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tbmq
+spec:
+  template:
+    spec:
+      volumes:
+        - name: kafka-client-cert         # KafkaUser tbmq-broker (Strimzi User Operator)
+          secret:
+            secretName: tbmq-broker
+            items:
+              - key: user.p12
+                path: user.p12
+        - name: kafka-cluster-ca          # Strimzi cluster CA: verifies the brokers
+          secret:
+            secretName: tbmq-kafka-cluster-ca-cert
+            items:
+              - key: ca.crt
+                path: ca.crt
+      containers:
+        - name: server
+          volumeMounts:
+            - name: kafka-client-cert
+              mountPath: /etc/kafka-client/user
+              readOnly: true
+            - name: kafka-cluster-ca
+              mountPath: /etc/kafka-client/cluster-ca
+              readOnly: true
+          env:
+            - name: TB_KAFKA_SERVERS
+              value: tbmq-kafka-kafka-bootstrap:9093
+            # mTLS to Kafka. TB_KAFKA_DEFAULT_PRODUCER_CONSUMER_CONFIG is the base for every TBMQ
+            # Kafka client (admin, producers, consumers); $(KAFKA_CLIENT_KEYSTORE_PASSWORD) is
+            # expanded by the kubelet, so it must be defined above it.
+            - name: KAFKA_CLIENT_KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tbmq-broker
+                  key: user.password
+            - name: TB_KAFKA_DEFAULT_PRODUCER_CONSUMER_CONFIG
+              value: >-
+                security.protocol:SSL;ssl.truststore.type:PEM;ssl.truststore.location:/etc/kafka-client/cluster-ca/ca.crt;ssl.keystore.type:PKCS12;ssl.keystore.location:/etc/kafka-client/user/user.p12;ssl.keystore.password:$(KAFKA_CLIENT_KEYSTORE_PASSWORD)
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: tbmq-db-app
+                  key: username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tbmq-db-app
+                  key: password
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tbmq-valkey
+                  key: password

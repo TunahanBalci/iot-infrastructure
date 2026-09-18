@@ -1,0 +1,12 @@
+# Stakater Reloader (Helm values). Rolls workloads annotated reloader.stakater.com/auto when a
+# Secret or ConfigMap they use changes: TBMQ loads its MQTTS keystore and Kafka client
+# certificate only at startup, so renewals by cert-manager and Strimzi need a restart.
+reloader:
+  reloadStrategy: annotations     # pod-template annotation, no extra env vars in the spec
+  deployment:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 256Mi

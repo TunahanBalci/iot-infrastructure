@@ -1,0 +1,21 @@
+# Points the upstream TBMQ workloads at the operator-managed data services:
+#   Kafka    tbmq-kafka-kafka-bootstrap:9093 (Strimzi), mTLS as KafkaUser tbmq-broker
+#   Postgres tbmq-db-rw, credentials from secret tbmq-db-app (CloudNativePG)
+#   Valkey   tbmq-valkey, password from secret tbmq-valkey
+# Used by .generated/tbmq (broker, integration executor) and .generated/tbmq-db-setup.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - path: tbmq.yaml
+    target:
+      kind: StatefulSet
+      name: tbmq
+  - path: integration-executor.yaml
+    target:
+      kind: StatefulSet
+      name: tbmq-integration-executor
+  - path: db-setup.yaml
+    target:
+      kind: Pod
+      name: tb-db-setup

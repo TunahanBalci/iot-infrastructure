@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tbmq
+  namespace: thingsboard-mqtt-broker
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 45
+      volumes:
+        - name: tbmq-mqtt-tls
+          secret:
+            secretName: tbmq-mqtt-tls
+        - name: tbmq-device-ca
+          configMap:
+            name: tbmq-device-ca          # generated from cert-manager/iot-device-ca (hash-suffixed)
+        - name: tbmq-keystore
+          emptyDir:
+            sizeLimit: 1Mi
+      # MQTTS listener keystore = cert-manager's keystore.p12 (server key + chain) plus the device CA
+      # as a trusted entry. TBMQ trusts every certificate entry for client authentication; appending
+      # the CA to a PEM chain instead makes TBMQ fail with "Certificate chain is not valid".
+      # Rebuilt on every pod start (TBMQ loads it once: certificate renewals need a restart).
+      initContainers:
+        - name: tls-keystore
+          image: tbmq-node                # replaced with the server image (kustomization replacements)
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >-
+              cp /etc/tbmq/tls/keystore.p12 /etc/tbmq/keystore/mqtt-server.p12 &&
+              keytool -importcert -noprompt -alias iot-device-ca -file /etc/tbmq/device-ca/ca.crt
+              -keystore /etc/tbmq/keystore/mqtt-server.p12 -storetype PKCS12 -storepass:env KEYSTORE_PASSWORD
+          env:
+            - name: KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tbmq-mqtt-keystore
+                  key: password
+          volumeMounts:
+            - name: tbmq-mqtt-tls
+              mountPath: /etc/tbmq/tls
+              readOnly: true
+            - name: tbmq-device-ca
+              mountPath: /etc/tbmq/device-ca
+              readOnly: true
+            - name: tbmq-keystore
+              mountPath: /etc/tbmq/keystore
+      containers:
+        - name: server
+          volumeMounts:
+            - name: tbmq-keystore
+              mountPath: /etc/tbmq/keystore
+              readOnly: true
+          env:
+            # MQTTS 8883: TLS terminated by TBMQ (passthrough via Cilium L4). Client certificates
+            # are required and checked by the X.509 auth provider, configured over REST by
+            # scripts/install/70-tbmq.sh (clientAuthType CLIENT_AUTH_REQUIRED).
+            - name: LISTENER_SSL_ENABLED
+              value: "true"
+            - name: LISTENER_SSL_CREDENTIALS_TYPE
+              value: KEYSTORE
+            - name: LISTENER_SSL_KEY_STORE_TYPE
+              value: PKCS12
+            - name: LISTENER_SSL_KEY_STORE
+              value: /etc/tbmq/keystore/mqtt-server.p12
+            - name: LISTENER_SSL_KEY_STORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tbmq-mqtt-keystore
+                  key: password
+            - name: LISTENER_SSL_KEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tbmq-mqtt-keystore
+                  key: password
+            # UI/REST session tokens. Without it TBMQ signs them with the key published in its
+            # default thingsboard-mqtt-broker.yml, so anyone could forge an admin token.
+            - name: JWT_TOKEN_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tbmq-jwt
+                  key: signing-key
+            # 1883 stays for in-cluster APPLICATION clients (consensus, MQTT Basic + ACLs) and is not
+            # on the LoadBalancer. MQTT over WebSocket is off: Envoy would terminate TLS, so a client
+            # certificate could never reach TBMQ.
+            - name: LISTENER_WS_ENABLED
+              value: "false"
+          # Pull a hung pod out of the L4 backend set in ~15s, not ~100s.
+          readinessProbe:
+            tcpSocket:
+              port: 1883
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Let endpoint removal propagate before sockets close.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 15

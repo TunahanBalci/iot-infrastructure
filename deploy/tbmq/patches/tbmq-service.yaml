@@ -1,0 +1,16 @@
+- op: replace
+  path: /spec
+  value:
+    type: ClusterIP
+    selector:
+      app: tbmq
+    ports:
+      - name: http
+        port: 8083
+        targetPort: 8083
+      - name: mqtt-tcp
+        port: 1883
+        targetPort: 1883
+      - name: mqtt-ssl
+        port: 8883
+        targetPort: 8883

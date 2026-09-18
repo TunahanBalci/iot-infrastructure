@@ -1,0 +1,3 @@
+# Strimzi Cluster Operator (Helm values). Watches every namespace, so a separate
+# application Kafka can be added later without reinstalling the operator.
+watchAnyNamespace: true
