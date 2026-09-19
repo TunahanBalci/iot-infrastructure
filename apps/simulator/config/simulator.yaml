@@ -1,0 +1,145 @@
+# =============================================================================
+# Tunnel IoT Simulator — central configuration
+# =============================================================================
+# Every key can be overridden with an environment variable:
+#   SIM__<SECTION>__<KEY>=<value>        (double underscore = nesting)
+# Examples:
+#   SIM__MQTT__HOST=broker.local
+#   SIM__TOPOLOGY__TUNNELS=500
+#   SIM__SENSORS__MISCLASSIFICATION_RATE=0.10
+#   SIM__SENSORS__OVERRIDES__MIDDLE__MISS_RATE=0.2
+# Values are parsed as YAML scalars (numbers, booleans, lists like "[1, 2]").
+# Values containing { or } are always kept as strings, e.g.
+#   SIM__MQTT__TLS__CERTFILE=/certs/{tunnel_id}.pem
+#
+# Expected steady-state message rate (printed at startup):
+#   tunnels * 3 devices * traffic.msgs_per_device_s * (1 - miss_rate) * (1 + duplicate_rate)
+# Profiles mode: 5 tunnels * 3 * 2/s = 30 msg/s (45 in the evening burst).
+# =============================================================================
+
+simulation:
+  seed: 42                  # deterministic tunnels & traffic; null = random
+  time_scale: 1.0           # 1.0 = real time; 2.0 = sim runs 2x faster than wall clock
+  duration_s: null          # stop after N wall-clock seconds; null = run forever
+  warm_start: true          # pre-fill tunnels with vehicles already inside at t=0
+  workers: auto             # simulator processes; "auto" = available CPUs (max 16)
+  tick_ms: 2.0              # scheduler granularity: events are published in batches up to this late (timestamps stay exact); lower = more CPU
+  stats_interval_s: 5.0     # throughput log interval
+  max_lag_s: 5.0            # warn when a worker falls this far behind schedule (events still carry correct timestamps)
+
+topology:
+  # profiles:  the curated tunnels of profiles_path — name, city, speed limit, traffic mix and
+  #            access rules (the deployment; make sim-up).
+  # generator: tunnels synthesized from the seed, for load tests (make sim-up MODE=generator LOAD=...).
+  #            tunnels / index_offset / tunnel_id_format / length_m / lanes_per_direction apply to
+  #            generator mode only; in profiles mode every tunnel takes them from its profile.
+  mode: profiles
+  profiles_path: config/tunnels.yaml
+  tunnels: 25000
+  index_offset: 0           # first tunnel index; give each simulator instance a disjoint range when running several
+  tunnel_id_format: "T{index:06d}"
+  length_m: [300, 3000]     # per-tunnel length, uniform [min, max]
+  lanes_per_direction: [1, 3]
+  # Sensors are placed at fractions of tunnel length: start=0.0, middle=0.5, end=1.0 (fixed by design).
+
+traffic:
+  # One vehicle produces one detection per device, so this is both the per-device message rate
+  # and the per-tunnel vehicle arrival rate (Poisson). Sensor misses and duplicates apply on top.
+  msgs_per_device_s: 2.0
+  burst:                    # local Istanbul time; every device sends faster in the evening peak
+    from: "17:00"
+    to: "20:00"
+    msgs_per_device_s: 3.0
+  rate_variation: [1.0, 1.0]  # per-tunnel multiplier, uniform [min, max] (load tests; 1.0 = exact rate)
+  start_to_end_ratio: 0.5   # share of vehicles travelling start -> end (rest go end -> start)
+  # Which vehicle types appear is the tunnel's own type_mix (config/tunnels.yaml). Their lengths
+  # and free speeds come from the type itself (src/tunnel_sim/vehicles.py: PHYSICAL) applied to
+  # the tunnel's posted speed limit, so adding types never changes the message rate.
+
+sensors:
+  # Classification: the sensor reports the vehicle's type. It is wrong at
+  # misclassification_rate, and then reports a neighbouring size class (MINIBUS for a
+  # HAFIF_TICARI, never a MOTOSIKLET for a CEKICI_YARI_ROMORK). Reported confidence follows
+  # how far the length estimate sits from the nearest size boundary, relative to the sensor's
+  # own length noise, so borderline vehicles are reported with low confidence.
+  length_noise_std_m: 0.6
+  misclassification_rate: 0.03     # probability of reporting the neighbouring type
+  unknown_rate: 0.01               # probability the reading is too ambiguous: BILINMEYEN
+  miss_rate: 0.01                  # probability sensor does not report a vehicle at all
+  duplicate_rate: 0.005            # probability a detection is published twice
+  duplicate_delay_ms: [5, 500]     # delay of the duplicate copy, uniform [min, max]
+  timestamp_jitter_ms: 15.0        # std dev of noise on reported detection timestamp
+  speed_noise_ratio: 0.03          # std dev of speed measurement noise, relative
+  # A fraction of sensors are "degraded": their misclassification/miss/duplicate
+  # rates and noise are multiplied by degraded_multiplier. Chosen deterministically from seed.
+  degraded_ratio: 0.05
+  degraded_multiplier: 5.0
+  # Per-position overrides of any of the rate/noise fields above.
+  overrides:
+    start: {}
+    middle: {}
+    end: {}
+
+payload:
+  include_vehicle_id: false        # include ground-truth vehicle id in detections (makes consensus trivial; for evaluation)
+  include_true_class: false        # include ground-truth class in detections (for evaluation)
+
+mqtt:
+  host: localhost
+  port: 1883
+  transport: tcp                   # tcp | websockets
+  # shared:     each worker opens connections_per_worker connections; its tunnels share them.
+  # per_tunnel: one connection per tunnel, carrying all three of its sensors (for brokers that
+  #             authenticate each tunnel with its own X.509 certificate). A worker multiplexes all
+  #             of its connections on one network thread (plus a few connect threads).
+  connection_mode: shared          # shared | per_tunnel
+  # client ids: shared <prefix>-w<worker>-c<conn>, per_tunnel <prefix>-<tunnel_id> (e.g. tunnel-sim-T000123).
+  # Instances must not share client ids: give each its own prefix (shared) or index_offset range.
+  client_id_prefix: tunnel-sim
+  username: null
+  password: null
+  keepalive_s: 30
+  qos: 0                           # 0 | 1 | 2 — QoS 0 required for ~100k msg/s
+  retain: false
+  connections_per_worker: 1        # MQTT connections per worker process (shared mode only; ignored in per_tunnel)
+  topic_template: "tunnels/{tunnel_id}/sensors/{position}/detections"
+  status_topic_template: "simulator/{client_id}/status"   # retained online/offline + MQTT5 Will, per connection
+  message_expiry_s: 60             # MQTT5 Message Expiry Interval; null/0 = none
+  user_properties: true            # MQTT5 User Properties: tunnel_id, sensor_id, position, schema
+  session_expiry_s: 0              # MQTT5 Session Expiry Interval
+  # Beyond this many unsent messages, new messages are dropped (counted in dropped=) instead of
+  # buffering unbounded. shared: per connection. per_tunnel: per worker, summed over all of its
+  # connections, so memory stays bounded however many tunnels there are; messages for a tunnel whose
+  # connection is down are dropped immediately.
+  max_pending_messages: 200000
+  # per_tunnel only: new connection attempts per second, across all workers (initial connects and
+  # reconnects), so startup and broker restarts do not cause connect storms. Startup takes about
+  # tunnels / connect_rate_per_s seconds.
+  connect_rate_per_s: 500
+  # Exit 1 if the broker cannot be reached within this time at startup. per_tunnel: a worker fails
+  # only if none of its connections succeeded; it waits while connections keep succeeding, and starts
+  # with the rest still retrying once none newly connected for this long.
+  connect_timeout_s: 30
+  reconnect_delay_s: [1, 30]       # [min, max] backoff; per_tunnel adds random jitter between min and the current backoff
+  tls:
+    enabled: false
+    ca_certs: null                 # CA bundle that verifies the broker certificate
+    # Client certificate (PEM, leaf followed by the issuing CA chain; the whole chain is sent) and key.
+    # per_tunnel only: may contain {tunnel_id}, e.g. /certs/{tunnel_id}.pem and /certs/{tunnel_id}.key.
+    # Certificates are loaded on a connection's first attempt; a missing file is retried like a connect error.
+    certfile: null
+    keyfile: null
+    insecure: false
+
+output:
+  sink: mqtt                       # mqtt | stdout (debug) | discard (generation benchmark, no network)
+
+service:
+  # Prometheus /metrics, /healthz and time control (POST /time, POST /time/resync) of the supervisor (tunnel_sim_* : published, dropped, clients,
+  # scheduler lag). null = off. make sim-up sets it to SIM_METRICS_PORT so the cluster can scrape the
+  # simulator as a static target on the host.
+  http_port: null
+  http_bind: 0.0.0.0              # make sim-up binds K3S_NODE_IP: reachable from the cluster, not from the LAN
+
+logging:
+  level: INFO

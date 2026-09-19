@@ -1,0 +1,142 @@
+# =============================================================================
+# Tunnel profiles — the simulated road network (topology.mode: profiles, the default)
+# =============================================================================
+# Single source of truth: the simulator builds its tunnels from this file, and
+# scripts/install/85-storage.sh renders it into deploy/storage/schema/50-profiles.sql
+# (iot.tunnel_profiles, iot.tunnel_rules) so Grafana's alert queries join detections
+# against exactly these limits and rules.
+#
+#   tunnel_id            id in topics, payloads and the client certificate CN
+#   city_code            Turkish province code (1..81); also the local plate prefix
+#   speed_limit_kmh      posted limit; vehicles drive near it, a couple per day exceed it
+#   type_mix             relative spawn weights (BILINMEYEN is a sensor output, never spawned)
+#   rules                vehicle types not allowed in a window of the local day
+#                        (Europe/Istanbul). Banned types are not impossible: their weight is
+#                        multiplied by traffic.violation_factor, so a few per day still pass —
+#                        those are what the restricted-vehicle alerts show.
+#
+# Vehicle types: MOTOSIKLET OTOMOBIL HAFIF_TICARI MINIBUS OTOBUS KAMYON
+#                CEKICI_YARI_ROMORK TRAKTOR OZEL_AMACLI_TASIT (+ BILINMEYEN, sensors only)
+# =============================================================================
+
+tunnels:
+  # Urban toll tunnel under the Bosphorus: cars only, by regulation.
+  - tunnel_id: TR-AVRASYA
+    name: Avrasya Tüneli
+    city: İstanbul
+    city_code: 34
+    length_m: 5400
+    lanes_per_direction: 2
+    speed_limit_kmh: 70
+    type_mix:
+      OTOMOBIL: 80
+      HAFIF_TICARI: 11
+      MINIBUS: 5
+      MOTOSIKLET: 2
+      OZEL_AMACLI_TASIT: 1
+      KAMYON: 0.5
+      OTOBUS: 0.3
+      CEKICI_YARI_ROMORK: 0.15
+      TRAKTOR: 0.05
+    rules:
+      - types: [KAMYON, CEKICI_YARI_ROMORK, OTOBUS, MOTOSIKLET, TRAKTOR]
+        from: "00:00"
+        to: "24:00"
+
+  # Motorway tunnel on the İstanbul–Ankara corridor: freight barred from the peaks.
+  - tunnel_id: TR-BOLU
+    name: Bolu Dağı Tüneli
+    city: Bolu
+    city_code: 14
+    length_m: 3300
+    lanes_per_direction: 3
+    speed_limit_kmh: 80
+    type_mix:
+      OTOMOBIL: 55
+      HAFIF_TICARI: 12
+      KAMYON: 12
+      CEKICI_YARI_ROMORK: 10
+      OTOBUS: 5
+      MINIBUS: 4
+      MOTOSIKLET: 1.5
+      OZEL_AMACLI_TASIT: 0.4
+      TRAKTOR: 0.1
+    rules:
+      - types: [KAMYON, CEKICI_YARI_ROMORK]
+        from: "07:00"
+        to: "09:00"
+      - types: [KAMYON, CEKICI_YARI_ROMORK]
+        from: "17:00"
+        to: "20:00"
+
+  # Long mountain crossing on the Black Sea freight route; slow traffic barred at night.
+  - tunnel_id: TR-ZIGANA
+    name: Zigana Tüneli
+    city: Gümüşhane
+    city_code: 29
+    length_m: 14500
+    lanes_per_direction: 2
+    speed_limit_kmh: 80
+    type_mix:
+      OTOMOBIL: 50
+      KAMYON: 15
+      CEKICI_YARI_ROMORK: 12
+      HAFIF_TICARI: 10
+      MINIBUS: 6
+      OTOBUS: 4
+      TRAKTOR: 2
+      OZEL_AMACLI_TASIT: 1
+      MOTOSIKLET: 1
+    rules:
+      - types: [TRAKTOR, OZEL_AMACLI_TASIT]
+        from: "22:00"
+        to: "06:00"
+
+  # Single-lane-per-direction high-altitude tunnel: no tractors, no night motorcycles.
+  - tunnel_id: TR-OVIT
+    name: Ovit Tüneli
+    city: Rize
+    city_code: 53
+    length_m: 14300
+    lanes_per_direction: 1
+    speed_limit_kmh: 70
+    type_mix:
+      OTOMOBIL: 48
+      HAFIF_TICARI: 14
+      KAMYON: 14
+      MINIBUS: 8
+      CEKICI_YARI_ROMORK: 8
+      OTOBUS: 4
+      TRAKTOR: 2
+      MOTOSIKLET: 1
+      OZEL_AMACLI_TASIT: 1
+    rules:
+      - types: [TRAKTOR]
+        from: "00:00"
+        to: "24:00"
+      - types: [MOTOSIKLET]
+        from: "20:00"
+        to: "06:00"
+
+  # Ilgaz pass tunnel: heavy vehicles barred in the small hours.
+  - tunnel_id: TR-ILGAZ
+    name: Ilgaz 15 Temmuz İstiklal Tüneli
+    city: Kastamonu
+    city_code: 37
+    length_m: 5400
+    lanes_per_direction: 2
+    speed_limit_kmh: 80
+    type_mix:
+      OTOMOBIL: 58
+      HAFIF_TICARI: 12
+      KAMYON: 10
+      CEKICI_YARI_ROMORK: 8
+      OTOBUS: 6
+      MINIBUS: 4
+      MOTOSIKLET: 1.5
+      TRAKTOR: 0.3
+      OZEL_AMACLI_TASIT: 0.2
+    rules:
+      - types: [OTOBUS, CEKICI_YARI_ROMORK]
+        from: "23:00"
+        to: "05:00"
