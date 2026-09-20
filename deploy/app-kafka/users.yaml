@@ -1,0 +1,200 @@
+# Pipeline clients: SCRAM-SHA-512 users (Secret <name>: password, sasl.jaas.config) with least-privilege ACLs.
+# TBMQ integration executor (Kafka integration): raw MQTT envelopes in.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: tbmq-ie
+  namespace: iot-pipeline
+  labels:
+    strimzi.io/cluster: app-kafka
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: iot.mqtt.ingest
+          patternType: literal
+        operations: [Write, Describe]
+---
+# Validates and re-keys envelopes into detections, and routes the devices' health reports.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: telemetry-processor
+  namespace: iot-pipeline
+  labels:
+    strimzi.io/cluster: app-kafka
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: iot.mqtt.ingest
+          patternType: literal
+        operations: [Read, Describe]
+      - resource:
+          type: group
+          name: telemetry-processor
+          patternType: literal
+        operations: [Read]
+      - resource:
+          type: topic
+          name: iot.detections
+          patternType: literal
+        operations: [Write, Describe]
+      - resource:
+          type: topic
+          name: iot.detections.rejected
+          patternType: literal
+        operations: [Write, Describe]
+      - resource:
+          type: topic
+          name: iot.sensor-health
+          patternType: literal
+        operations: [Write, Describe]
+---
+# Fuses detections into vehicle events; owns its geometry topic.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: consensus
+  namespace: iot-pipeline
+  labels:
+    strimzi.io/cluster: app-kafka
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: iot.detections
+          patternType: literal
+        operations: [Read, Describe]
+      - resource:
+          type: group
+          name: consensus
+          patternType: literal
+        operations: [Read]
+      - resource:
+          type: topic
+          name: iot.vehicles
+          patternType: literal
+        operations: [Write, Describe]
+      - resource:
+          type: topic
+          name: iot.traffic
+          patternType: literal
+        operations: [Write, Describe]
+      - resource:
+          type: topic
+          name: iot.consensus.geometry
+          patternType: literal
+        operations: [Read, Write, Describe]
+---
+# ClickHouse Kafka engine tables (storage layer).
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: clickhouse
+  namespace: iot-pipeline
+  labels:
+    strimzi.io/cluster: app-kafka
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: iot.detections
+          patternType: literal
+        operations: [Read, Describe]
+      - resource:
+          type: topic
+          name: iot.detections.rejected
+          patternType: literal
+        operations: [Read, Describe]
+      - resource:
+          type: topic
+          name: iot.vehicles
+          patternType: literal
+        operations: [Read, Describe]
+      - resource:
+          type: topic
+          name: iot.traffic
+          patternType: literal
+        operations: [Read, Describe]
+      - resource:
+          type: topic
+          name: iot.sensor-health
+          patternType: literal
+        operations: [Read, Describe]
+      - resource:
+          type: group
+          name: clickhouse-
+          patternType: prefix
+        operations: [Read]
+---
+# KEDA Kafka scaler: reads consumer group lag only.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: keda
+  namespace: iot-pipeline
+  labels:
+    strimzi.io/cluster: app-kafka
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: iot.
+          patternType: prefix
+        operations: [Describe]
+      - resource:
+          type: group
+          name: telemetry-processor
+          patternType: literal
+        operations: [Describe]
+      - resource:
+          type: group
+          name: consensus
+          patternType: literal
+        operations: [Describe]
+---
+# Read-only debugging (make watch-topic): short-lived console consumer pods labeled app=pipeline-viewer.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: pipeline-viewer
+  namespace: iot-pipeline
+  labels:
+    strimzi.io/cluster: app-kafka
+spec:
+  authentication:
+    type: scram-sha-512
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: iot.
+          patternType: prefix
+        operations: [Read, Describe]
+      - resource:
+          type: group
+          name: pipeline-viewer-
+          patternType: prefix
+        operations: [Read]

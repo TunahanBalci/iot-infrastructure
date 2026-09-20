@@ -1,0 +1,43 @@
+# =============================================================================
+# Telemetry processor — central configuration
+# =============================================================================
+# Every key can be overridden with an environment variable:
+#   PROCESSOR__<SECTION>__<KEY>=<value>     (double underscore = nesting)
+# Examples:
+#   PROCESSOR__KAFKA__BOOTSTRAP_SERVERS=app-kafka-kafka-bootstrap.iot-pipeline.svc:9093
+#   PROCESSOR__KAFKA__SASL_PASSWORD=...           (always kept a string)
+#   PROCESSOR__KAFKA__CONSUMER__FETCH_WAIT_MAX_MS=100   (librdkafka property, _ becomes .)
+# Values are parsed as YAML scalars (numbers, booleans); an empty value means null.
+# Tracing is configured with the standard OTEL_* variables (off unless OTEL_EXPORTER_OTLP_ENDPOINT is set).
+# =============================================================================
+
+kafka:
+  bootstrap_servers: localhost:9092
+  security_protocol: PLAINTEXT      # PLAINTEXT | SSL | SASL_PLAINTEXT | SASL_SSL (cluster: SASL_SSL)
+  sasl_mechanism: SCRAM-SHA-512     # SCRAM-SHA-512 | SCRAM-SHA-256 | PLAIN
+  sasl_username: null               # cluster: KafkaUser name (telemetry-processor)
+  sasl_password: null               # cluster: KafkaUser Secret key "password"
+  ssl_ca_location: null             # PEM CA file; null = system CAs (cluster: /etc/app-kafka/ca.crt)
+  client_id: "telemetry-processor-{hostname}"   # {hostname} = pod name
+  group_id: telemetry-processor
+  input_topic: iot.mqtt.ingest
+  output_topic: iot.detections      # accepted detections, key = tunnel_id
+  rejected_topic: iot.detections.rejected
+  poll_batch: 500                   # max records per poll batch
+  poll_timeout_s: 0.1               # a batch waits at most this long to fill up (latency at low rates)
+  commit_interval_s: 1.0            # commit fully acknowledged batches at most this often
+  shutdown_timeout_s: 20.0          # producer flush on SIGTERM / partition revoke (< terminationGracePeriodSeconds)
+  # Extra librdkafka properties; they override the built-ins:
+  #   consumer: group.id, partition.assignment.strategy=cooperative-sticky, enable.auto.commit=false,
+  #             enable.auto.offset.store=false, auto.offset.reset=earliest, queued.max.messages.kbytes=16384
+  #   producer: enable.idempotence=true, acks=all, compression.type=lz4, partitioner=murmur2_random,
+  #             linger.ms=5, queue.buffering.max.kbytes=65536
+  consumer: {}
+  producer: {}
+
+service:
+  http_port: 8080                   # /healthz /readyz /metrics; null = off
+  stats_interval_s: 10              # periodic stats log line
+
+logging:
+  level: INFO
