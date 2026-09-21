@@ -1,0 +1,133 @@
+# =============================================================================
+# Tunnel consensus service — central configuration
+# =============================================================================
+# Every key can be overridden with an environment variable:
+#   CONSENSUS__<SECTION>__<KEY>=<value>     (double underscore = nesting)
+# Examples:
+#   CONSENSUS__MQTT__HOST=tbmq.thingsboard-mqtt-broker.svc
+#   CONSENSUS__PARTITIONING__REPLICAS=3
+#   CONSENSUS__OUTPUT__SINK=stdout
+#   CONSENSUS__KAFKA__SASL_PASSWORD=...          (passwords, ids, topics and servers stay strings)
+#   CONSENSUS__KAFKA__CONSUMER__FETCH_MIN_BYTES=1 (librdkafka passthrough: "_" = ".")
+# Values are parsed as YAML scalars (numbers, booleans, lists like "[1, 2]").
+# =============================================================================
+
+input:
+  # mqtt:  TBMQ APPLICATION client(s); tunnels partitioned over worker processes (partitioning.*).
+  # kafka: member of consumer group kafka.group_id on kafka.detections_topic, one process; tunnel
+  #        ownership = assigned partitions (records keyed by tunnel_id). partitioning.*, mqtt.* and
+  #        geometry.state_dir are ignored; geometry lives in kafka.geometry_topic.
+  source: mqtt
+  topic_filter: "tunnels/+/sensors/+/detections"              # unsharded: one wildcard subscription
+  tunnel_topic_template: "tunnels/{tunnel_id}/sensors/+/detections"  # sharded: one filter per owned tunnel
+  qos: 1                    # subscription QoS; delivery QoS is min(publisher QoS, this)
+  subscribe_batch: 500      # filters per SUBSCRIBE packet (TBMQ rejects packets > 64 KiB)
+
+partitioning:
+  # A tunnel is owned by exactly one partition (crc32(tunnel_id) % partitions), so its
+  # three sensors always meet in one process. partitions = replicas * workers.
+  replicas: 1               # service instances (StatefulSet replicas)
+  ordinal: auto             # this instance's index; auto = trailing -N of $HOSTNAME, else 0
+  workers: 1                # processes per instance (one MQTT session each)
+  # Needed only when partitions > 1: MQTT wildcards cannot hash, so owned tunnels are
+  # subscribed one by one. Mirror the simulator's topology section.
+  tunnels: 25000
+  index_offset: 0
+  tunnel_id_format: "T{index:06d}"
+
+mqtt:
+  host: localhost
+  port: 1883
+  transport: tcp            # tcp | websockets
+  client_id_prefix: consensus   # alphanumeric (TBMQ APPLICATION client); id = <prefix><partitions>p<partition>
+  username: null
+  password: null
+  keepalive_s: 30
+  clean_start: true         # fresh session on process start ...
+  session_expiry_s: 300     # ... that survives network/broker blips (TBMQ: persistent APPLICATION session)
+  connect_timeout_s: 30
+  reconnect_delay_s: [1, 30]
+  max_pending_messages: 100000   # outgoing buffer; beyond this results are dropped (counted)
+  status_topic_template: "consensus/{client_id}/status"   # retained online/offline + MQTT5 Will
+  tls:
+    enabled: false
+    ca_certs: null
+    certfile: null
+    keyfile: null
+    insecure: false
+
+kafka:
+  # App Kafka (input.source=kafka and/or output.sink=kafka). Defaults = the cluster contract.
+  bootstrap_servers: "app-kafka-kafka-bootstrap.iot-pipeline.svc:9093"
+  security_protocol: SASL_SSL     # PLAINTEXT | SSL | SASL_PLAINTEXT | SASL_SSL
+  sasl_mechanism: SCRAM-SHA-512   # SCRAM-SHA-512 | SCRAM-SHA-256 | PLAIN
+  sasl_username: consensus        # KafkaUser name
+  sasl_password: null             # from the KafkaUser Secret (key "password"), via env
+  ssl_ca_location: /etc/app-kafka/ca.crt   # cluster CA PEM
+  client_id: null                 # null = consensus-$HOSTNAME
+  group_id: consensus
+  detections_topic: iot.detections          # input, key tunnel_id
+  vehicles_topic: iot.vehicles              # outputs, key tunnel_id (murmur2 partitioner)
+  traffic_topic: iot.traffic
+  geometry_topic: iot.consensus.geometry    # compacted, key tunnel_id: learned tunnel lengths
+  # Every commit_interval_s: flush the producer, then commit per partition the offset of the oldest
+  # detection whose vehicle event is not emitted yet (a restart or rebalance re-reads from there).
+  commit_interval_s: 5
+  poll_batch: 500                 # records per consume() call
+  flush_timeout_s: 30             # producer flush before a commit / at shutdown
+  geometry_load_timeout_s: 60     # read the geometry topic to its end (startup, new partitions)
+  consumer: {}                    # librdkafka consumer properties, applied last (e.g. session.timeout.ms)
+  producer: {}                    # librdkafka producer properties, applied last (e.g. linger.ms)
+
+geometry:
+  # Sensor spacing is learned per tunnel from traffic: pairs of detections vote for the
+  # implied distance (travel time x speed); the same vehicle always votes for the same value.
+  length_m: [100, 25000]          # plausible tunnel lengths (must clear the longest deployed tunnel)
+  speed_kmh: [20, 160]            # plausible speeds (bounds the calibration window)
+  calibration_min_length_m: 8.0   # only long vehicles vote (fewer, more distinctive); 0 = all
+  min_votes: 8.0                  # weighted votes needed in the winning peak
+  peak_ratio: 2.5                 # winning peak must beat any other peak by this factor
+  bin_ratio: 0.01                 # histogram bin width (relative)
+  refine_alpha: 0.01              # keep refining from fused vehicles; 0 = off
+  state_dir: null                 # MQTT input: persist learned lengths here (restarts skip calibration)
+  save_interval_s: 60             # ... how often; Kafka input: write changed lengths of owned tunnels
+
+association:
+  # At constant speed the middle detection lies at the midpoint of the first and last one.
+  # That constraint carries only timestamp jitter, so it separates vehicles in dense traffic.
+  midpoint_tolerance_ms: 150      # minimum gate on |t_middle - (t_first + t_last) / 2|; widens with learned jitter
+  time_tolerance_ms: 250          # fixed part of travel-time gates (timestamp jitter)
+  time_tolerance_ratio: 0.03      # minimum relative travel-time gate (speed changes)
+  gate_sigma: 3.0                 # travel-time gate = sigma x learned sensor speed noise
+  speed_noise_prior: 0.03         # relative speed error assumed until learned
+  length_noise_prior_m: 0.6       # length error assumed until learned
+  noise_alpha: 0.02               # learning rate of per-sensor speed/length noise
+  max_lateness_ms: 2000           # wait this long after the expected last sensor before emitting
+  dedup_window: 512               # recent sequence numbers remembered per sensor
+
+fusion:
+  # Each sensor votes for the vehicle type it reported, weighted by the log-odds of its own
+  # confidence; BILINMEYEN ("could not tell") abstains. The devices report their own health
+  # (tunnels/{tunnel_id}/sensors/{position}/health), so a vote's weight depends only on where
+  # the sensor sits — override a position here if one is known to be better placed.
+  position_weights: {}            # e.g. {middle: 1.2}; unset = 1.0
+  confidence_range: [0.5, 0.999]  # clamp for reported confidences
+
+reporting:
+  interval_s: 60                  # per-tunnel traffic window (retained on MQTT, "ts" = report time); null = off
+
+output:
+  sink: mqtt                      # mqtt | kafka (kafka.*_topic, key tunnel_id) | stdout (debug) | discard (benchmark)
+  # MQTT only (topics, QoS, expiry):
+  vehicle_topic_template: "tunnels/{tunnel_id}/vehicles"
+  traffic_topic_template: "tunnels/{tunnel_id}/traffic"
+  qos: 0
+  message_expiry_s: 300
+  include_detections: true        # message ids of the fused detections
+
+service:
+  stats_interval_s: 5
+  http_port: 8080                 # /healthz /readyz /metrics; null = off
+
+logging:
+  level: INFO
