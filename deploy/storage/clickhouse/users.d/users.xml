@@ -1,0 +1,75 @@
+<?xml version="1.0"?>
+<!--
+  Users (Secret clickhouse-users → pod env; only SHA-256 hashes reach the server config):
+    default  admin, localhost only (kubectl exec ... clickhouse-client; CLICKHOUSE_PASSWORD in the pod env)
+    grafana  read-only, SELECT on database iot, from the network (Secret clickhouse-grafana)
+  Kafka ingestion runs inside the server (Kafka engine + materialized views): no ingest user.
+  The "default" profile also applies to background Kafka streaming and system log flushes.
+-->
+<clickhouse>
+    <profiles>
+        <default replace="replace">
+            <max_memory_usage>536870912</max_memory_usage>                    <!-- 512 MiB per query -->
+            <max_bytes_before_external_group_by>268435456</max_bytes_before_external_group_by>
+            <max_bytes_before_external_sort>268435456</max_bytes_before_external_sort>
+            <max_threads>2</max_threads>
+            <max_insert_threads>1</max_insert_threads>
+            <!-- Profilers off: no trace_log -->
+            <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+            <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+            <memory_profiler_step>0</memory_profiler_step>
+            <log_queries>1</log_queries>
+            <log_query_threads>0</log_query_threads>
+            <log_query_views>0</log_query_views>
+            <log_processors_profiles>0</log_processors_profiles>
+        </default>
+        <grafana>
+            <readonly>2</readonly>                          <!-- SELECT + SET; DDL/INSERT refused -->
+            <max_memory_usage>402653184</max_memory_usage>  <!-- 384 MiB per query -->
+            <max_bytes_before_external_group_by>134217728</max_bytes_before_external_group_by>
+            <max_bytes_before_external_sort>134217728</max_bytes_before_external_sort>
+            <max_threads>2</max_threads>
+            <max_execution_time>60</max_execution_time>
+            <max_result_rows>1000000</max_result_rows>
+            <result_overflow_mode>throw</result_overflow_mode>
+            <query_profiler_real_time_period_ns>0</query_profiler_real_time_period_ns>
+            <query_profiler_cpu_time_period_ns>0</query_profiler_cpu_time_period_ns>
+            <memory_profiler_step>0</memory_profiler_step>
+            <!-- Clients may lower these limits, never raise them. -->
+            <constraints>
+                <max_memory_usage><max>402653184</max></max_memory_usage>
+                <max_threads><max>4</max></max_threads>
+                <max_execution_time><max>300</max></max_execution_time>
+                <max_bytes_before_external_group_by><max>134217728</max></max_bytes_before_external_group_by>
+                <max_bytes_before_external_sort><max>134217728</max></max_bytes_before_external_sort>
+                <!-- A direct SELECT on a Kafka engine table would consume and commit messages. -->
+                <stream_like_engine_allow_direct_select><const/></stream_like_engine_allow_direct_select>
+                <kafka_disable_num_consumers_limit><const/></kafka_disable_num_consumers_limit>
+            </constraints>
+        </grafana>
+    </profiles>
+
+    <users>
+        <default replace="replace">
+            <password_sha256_hex from_env="CLICKHOUSE_DEFAULT_PASSWORD_SHA256"/>
+            <networks>
+                <ip>::1</ip>
+                <ip>127.0.0.1</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <access_management>1</access_management>
+        </default>
+        <grafana>
+            <password_sha256_hex from_env="CLICKHOUSE_GRAFANA_PASSWORD_SHA256"/>
+            <networks>
+                <ip>::/0</ip>                               <!-- NetworkPolicy limits who can connect -->
+            </networks>
+            <profile>grafana</profile>
+            <quota>default</quota>
+            <grants>
+                <query>GRANT SELECT ON iot.*</query>
+            </grants>
+        </grafana>
+    </users>
+</clickhouse>

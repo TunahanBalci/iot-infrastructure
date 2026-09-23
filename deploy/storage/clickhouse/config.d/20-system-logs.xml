@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<!--
+  System log tables: keep the ones useful for operations (query_log, part_log, error/crash logs)
+  with short TTLs, drop the high-volume profiling logs. Metrics go to Prometheus (:9363) instead of
+  metric_log / asynchronous_metric_log.
+-->
+<clickhouse>
+    <query_log replace="replace">
+        <database>system</database>
+        <table>query_log</table>
+        <engine>ENGINE = MergeTree PARTITION BY event_date ORDER BY (event_date, event_time) TTL event_date + INTERVAL 7 DAY DELETE SETTINGS ttl_only_drop_parts = 1</engine>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>65536</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+        <buffer_size_rows_flush_threshold>32768</buffer_size_rows_flush_threshold>
+    </query_log>
+    <!-- Part creations, merges, moves (insert/merge latency, TTL moves to the S3 tier). -->
+    <part_log replace="replace">
+        <database>system</database>
+        <table>part_log</table>
+        <engine>ENGINE = MergeTree PARTITION BY event_date ORDER BY (event_date, event_time) TTL event_date + INTERVAL 7 DAY DELETE SETTINGS ttl_only_drop_parts = 1</engine>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <max_size_rows>65536</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+        <buffer_size_rows_flush_threshold>32768</buffer_size_rows_flush_threshold>
+    </part_log>
+    <error_log replace="replace">
+        <database>system</database>
+        <table>error_log</table>
+        <engine>ENGINE = MergeTree PARTITION BY event_date ORDER BY (event_date, event_time) TTL event_date + INTERVAL 14 DAY DELETE SETTINGS ttl_only_drop_parts = 1</engine>
+        <flush_interval_milliseconds>7500</flush_interval_milliseconds>
+        <collect_interval_milliseconds>10000</collect_interval_milliseconds>
+        <max_size_rows>8192</max_size_rows>
+        <reserved_size_rows>1024</reserved_size_rows>
+        <buffer_size_rows_flush_threshold>4096</buffer_size_rows_flush_threshold>
+    </error_log>
+
+    <trace_log remove="remove"/>
+    <text_log remove="remove"/>
+    <metric_log remove="remove"/>
+    <asynchronous_metric_log remove="remove"/>
+    <query_metric_log remove="remove"/>
+    <query_thread_log remove="remove"/>
+    <query_views_log remove="remove"/>
+    <processors_profile_log remove="remove"/>
+    <opentelemetry_span_log remove="remove"/>
+    <asynchronous_insert_log remove="remove"/>
+    <background_schedule_pool_log remove="remove"/>
+    <blob_storage_log remove="remove"/>
+    <s3queue_log remove="remove"/>
+    <iceberg_metadata_log remove="remove"/>
+    <delta_lake_metadata_log remove="remove"/>
+    <zookeeper_log remove="remove"/>
+    <aggregated_zookeeper_log remove="remove"/>
+    <session_log remove="remove"/>
+</clickhouse>

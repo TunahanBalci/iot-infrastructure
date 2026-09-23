@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  librdkafka settings for every Kafka engine table (schema/40-streams.sql.tpl): app Kafka listener
+  SASL_SSL + SCRAM-SHA-512 as KafkaUser "clickhouse". Password from the pod environment and the
+  cluster CA from /etc/app-kafka/ca.crt (both from Secret clickhouse-kafka, copied by
+  scripts/install/85-storage.sh).
+-->
+<clickhouse>
+    <kafka>
+        <security_protocol>sasl_ssl</security_protocol>
+        <sasl_mechanism>SCRAM-SHA-512</sasl_mechanism>
+        <sasl_username>clickhouse</sasl_username>
+        <sasl_password from_env="APP_KAFKA_PASSWORD"/>
+        <ssl_ca_location>/etc/app-kafka/ca.crt</ssl_ca_location>
+        <ssl_endpoint_identification_algorithm>https</ssl_endpoint_identification_algorithm>
+        <!-- Bound the per-consumer prefetch queue (default 64 MiB, untracked by ClickHouse). -->
+        <queued_max_messages_kbytes>8192</queued_max_messages_kbytes>
+        <fetch_max_bytes>8388608</fetch_max_bytes>
+        <max_partition_fetch_bytes>1048576</max_partition_fetch_bytes>
+        <!-- Group membership of a killed/restarted server expires after this; the replacement
+             consumers get partitions only then. Heartbeats run in a librdkafka thread. -->
+        <session_timeout_ms>15000</session_timeout_ms>
+        <heartbeat_interval_ms>3000</heartbeat_interval_ms>
+    </kafka>
+</clickhouse>

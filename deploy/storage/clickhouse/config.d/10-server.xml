@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<!--
+  ClickHouse server: single replica, no Keeper, lean memory profile (pod limit CLICKHOUSE_MEMORY_LIMIT).
+  Mounted at /etc/clickhouse-server/config.d/ (ConfigMap clickhouse-config, deploy/storage/kustomization.yaml.tpl).
+  The image's docker_related_config.xml is hidden by the mount: listen addresses are set here.
+-->
+<clickhouse>
+    <listen_host>::</listen_host>
+    <listen_host>0.0.0.0</listen_host>
+    <listen_try>1</listen_try>        <!-- IPv4-only pods: skip :: instead of failing -->
+
+    <!-- Pod logs only (Vector collects stdout); nothing under /var/log. -->
+    <logger replace="replace">
+        <level>information</level>
+        <console>1</console>
+    </logger>
+
+    <!-- HTTP 8123 and native 9000 only: no MySQL/PostgreSQL wire protocols, no interserver port
+         (single replica, nothing replicates). -->
+    <mysql_port remove="remove"/>
+    <postgresql_port remove="remove"/>
+    <interserver_http_port remove="remove"/>
+
+    <timezone>UTC</timezone>
+
+    <!-- Memory: the server refuses allocations above this share of the cgroup limit (ClickHouse
+         reads the limit from cgroups v2 and corrects its tracker with the cgroup usage, so untracked
+         memory like librdkafka queues and RocksDB also counts). The rest is headroom for the kernel. -->
+    <max_server_memory_usage_to_ram_ratio>0.8</max_server_memory_usage_to_ram_ratio>
+    <cgroups_memory_usage_observer_wait_time>5</cgroups_memory_usage_observer_wait_time>
+
+    <!-- Caches: defaults scale with RAM (~800 MiB each at 1.5 GiB); keep them small. -->
+    <mark_cache_size>67108864</mark_cache_size>                   <!-- 64 MiB -->
+    <index_mark_cache_size>8388608</index_mark_cache_size>        <!-- 8 MiB -->
+    <primary_index_cache_size>33554432</primary_index_cache_size> <!-- 32 MiB -->
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+    <index_uncompressed_cache_size>0</index_uncompressed_cache_size>
+    <query_condition_cache_size>16777216</query_condition_cache_size>
+    <compiled_expression_cache_size>16777216</compiled_expression_cache_size>
+    <compiled_expression_cache_elements_size>1000</compiled_expression_cache_elements_size>
+    <mmap_cache_size>256</mmap_cache_size>
+    <vector_similarity_index_cache_size>8388608</vector_similarity_index_cache_size>
+    <text_index_header_cache_size>8388608</text_index_header_cache_size>
+    <text_index_postings_cache_size>8388608</text_index_postings_cache_size>
+    <iceberg_metadata_files_cache_size>0</iceberg_metadata_files_cache_size>
+    <parquet_metadata_cache_size>0</parquet_metadata_cache_size>
+    <page_cache_max_size>0</page_cache_max_size>
+    <query_cache>
+        <max_size_in_bytes>16777216</max_size_in_bytes>
+        <max_entries>256</max_entries>
+        <max_entry_size_in_bytes>1048576</max_entry_size_in_bytes>
+        <max_entry_size_in_rows>100000</max_entry_size_in_rows>
+    </query_cache>
+
+    <!-- Concurrency and background pools (one replica, 5 Kafka tables, CLICKHOUSE_KAFKA_*_CONSUMERS
+         streaming threads). Every consumer flushes its own block, so merges have to keep up with
+         them or parts pile up until parts_to_delay_insert throttles the inserts. -->
+    <max_concurrent_queries>64</max_concurrent_queries>
+    <max_connections>256</max_connections>
+    <max_thread_pool_size>2000</max_thread_pool_size>
+    <background_pool_size>8</background_pool_size>
+    <background_merges_mutations_concurrency_ratio>2</background_merges_mutations_concurrency_ratio>
+    <background_move_pool_size>2</background_move_pool_size>
+    <background_fetches_pool_size>1</background_fetches_pool_size>
+    <background_common_pool_size>8</background_common_pool_size>
+    <background_schedule_pool_size>64</background_schedule_pool_size>
+    <!-- At least the sum of kafka_num_consumers over every Kafka table, or consumers queue up. -->
+    <background_message_broker_schedule_pool_size>24</background_message_broker_schedule_pool_size>
+    <background_buffer_flush_schedule_pool_size>2</background_buffer_flush_schedule_pool_size>
+    <background_distributed_schedule_pool_size>2</background_distributed_schedule_pool_size>
+    <tables_loader_background_pool_size>2</tables_loader_background_pool_size>
+    <asynchronous_metrics_update_period_s>10</asynchronous_metrics_update_period_s>
+    <mlock_executable>false</mlock_executable>
+
+    <merge_tree>
+        <!-- With 4 x 2 merge slots the defaults (8/20/25 free entries) would permanently shrink
+             merges to tiny parts and block mutations. -->
+        <number_of_free_entries_in_pool_to_lower_max_size_of_merge>2</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+        <number_of_free_entries_in_pool_to_execute_mutation>2</number_of_free_entries_in_pool_to_execute_mutation>
+        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>2</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+        <merge_max_block_size>4096</merge_max_block_size>
+        <max_bytes_to_merge_at_max_space_in_pool>10737418240</max_bytes_to_merge_at_max_space_in_pool>  <!-- 10 GiB parts max -->
+        <!-- MATERIALIZE TTL (after a TTL change) only recomputes TTL info; moves/deletes then happen
+             in the background instead of rewriting every part. -->
+        <materialize_ttl_recalculate_only>1</materialize_ttl_recalculate_only>
+        <!-- Throttle inserts well before the hard stop, so a merge backlog slows ingestion
+             instead of failing it outright. -->
+        <parts_to_delay_insert>300</parts_to_delay_insert>
+        <parts_to_throw_insert>600</parts_to_throw_insert>
+    </merge_tree>
+
+    <!-- Prometheus text endpoint (scraped by the monitoring stack). -->
+    <prometheus replace="replace">
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+        <errors>true</errors>
+    </prometheus>
+
+    <!-- EmbeddedRocksDB (iot.vehicle_event_ids, rollup dedup window): small memtables. -->
+    <rocksdb>
+        <options>
+            <max_background_jobs>2</max_background_jobs>
+            <max_open_files>256</max_open_files>
+        </options>
+        <column_family_options>
+            <write_buffer_size>8388608</write_buffer_size>
+            <max_write_buffer_number>2</max_write_buffer_number>
+        </column_family_options>
+    </rocksdb>
+</clickhouse>
