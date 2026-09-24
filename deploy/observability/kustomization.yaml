@@ -1,0 +1,46 @@
+# In-cluster objects of the observability layer that are not Helm-managed: scrape targets, alert rules
+# (vmalert VMRule, plus the ClickHouse-based Grafana rules in grafana-alerts.yaml) and the IoT
+# Grafana dashboards (sidecar label grafana_dashboard=1, folder "IoT").
+# Applied by scripts/install/90-observability.sh: kubectl kustomize deploy/observability | kubectl apply --server-side -f -
+# Not included: strimzi-kafka-metrics.yaml (applied into the Kafka namespaces by the Kafka install steps)
+# and the Helm values files.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+
+resources:
+  - scrapes.yaml
+  - alerts.yaml
+  - grafana-alerts.yaml
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: IoT
+
+configMapGenerator:
+  - name: grafana-dashboard-iot-pipeline-overview
+    files:
+      - dashboards/iot-pipeline-overview.json
+  - name: grafana-dashboard-iot-kafka
+    files:
+      - dashboards/kafka.json
+  - name: grafana-dashboard-iot-tbmq
+    files:
+      - dashboards/tbmq.json
+  - name: grafana-dashboard-iot-tunnel-traffic
+    files:
+      - dashboards/tunnel-traffic.json
+  - name: grafana-dashboard-iot-tunnel-operations
+    files:
+      - dashboards/tunnel-operations.json
+  - name: grafana-dashboard-iot-pipeline-economics
+    files:
+      - dashboards/pipeline-economics.json
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: iot-infrastructure
+    includeSelectors: false

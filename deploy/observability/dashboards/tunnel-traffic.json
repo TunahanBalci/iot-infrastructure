@@ -1,0 +1,1070 @@
+{
+  "uid": "iot-tunnel-traffic",
+  "title": "Tunnel traffic",
+  "tags": [
+    "iot",
+    "clickhouse"
+  ],
+  "description": "Vehicles, speeds and device health from ClickHouse database iot (tables vehicles_1m, vehicles, traffic, sensor_health, detections). Ten Turkish vehicle types; health is what each device reports about itself.",
+  "editable": false,
+  "graphTooltip": 1,
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "refresh": "30s",
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "1h"
+    ],
+    "time_options": [
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "3h",
+      "6h",
+      "12h",
+      "24h",
+      "7d",
+      "30d"
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "tunnel",
+        "label": "Tunnel",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ClickHouse"
+        },
+        "query": {
+          "refId": "tunnel",
+          "queryType": "sql",
+          "rawSql": "SELECT tunnel_id FROM iot.tunnel_profiles FINAL ORDER BY tunnel_id\nUNION DISTINCT\nSELECT DISTINCT tunnel_id FROM iot.traffic WHERE ts > now() - INTERVAL 1 DAY LIMIT 2000"
+        },
+        "definition": "SELECT tunnel_id FROM iot.tunnel_profiles FINAL ORDER BY tunnel_id\nUNION DISTINCT\nSELECT DISTINCT tunnel_id FROM iot.traffic WHERE ts > now() - INTERVAL 1 DAY LIMIT 2000",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "sort": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "iot"
+      ],
+      "asDropdown": true,
+      "title": "IoT dashboards",
+      "includeVars": false,
+      "keepTime": true
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Traffic",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Vehicles in range",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT sum(vehicles) AS vehicles\nFROM iot.vehicles_1m\nWHERE $__timeFilter(minute) AND tunnel_id IN (${tunnel:singlequote})",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 2,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Heavy vehicle share",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT sumIf(vehicles, classification IN ('KAMYON', 'CEKICI_YARI_ROMORK', 'OTOBUS')) / greatest(sum(vehicles), 1) AS heavy\nFROM iot.vehicles_1m\nWHERE $__timeFilter(minute) AND tunnel_id IN (${tunnel:singlequote})",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 3,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Average speed",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT avgMerge(speed_avg) AS avg_speed\nFROM iot.vehicles_1m\nWHERE $__timeFilter(minute) AND tunnel_id IN (${tunnel:singlequote})",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "velocitykmh",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 4,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Tunnels reporting (last 10 min)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT uniqExact(tunnel_id) AS tunnels\nFROM iot.traffic\nWHERE ts > now() - INTERVAL 10 MINUTE AND tunnel_id IN (${tunnel:singlequote})",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 5,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Vehicles per interval by type",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(minute) AS time, classification, sum(vehicles) AS vehicles\nFROM iot.vehicles_1m\nWHERE $__timeFilter(minute) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY time, classification\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Average speed by direction",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(minute) AS time, direction, avgMerge(speed_avg) AS speed\nFROM iot.vehicles_1m\nWHERE $__timeFilter(minute) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY time, direction\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "velocitykmh",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      }
+    },
+    {
+      "type": "table",
+      "title": "Vehicles per tunnel and type",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT tunnel_id,\n  sumIf(vehicles, classification = 'OTOMOBIL') AS otomobil,\n  sumIf(vehicles, classification IN ('HAFIF_TICARI', 'MINIBUS')) AS hafif,\n  sumIf(vehicles, classification IN ('KAMYON', 'CEKICI_YARI_ROMORK', 'OTOBUS')) AS agir,\n  sumIf(vehicles, classification IN ('MOTOSIKLET', 'TRAKTOR', 'OZEL_AMACLI_TASIT')) AS diger,\n  sumIf(vehicles, classification = 'BILINMEYEN') AS bilinmeyen,\n  sum(vehicles) AS total,\n  round(avgMerge(speed_avg), 1) AS avg_speed_kmh,\n  round(max(speed_max), 1) AS max_speed_kmh\nFROM iot.vehicles_1m\nWHERE $__timeFilter(minute) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY tunnel_id\nORDER BY total DESC\nLIMIT 50",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "transformations": [],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Traffic windows by direction (iot.traffic)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time,\n  sum(arraySum(mapValues(start_to_end))) AS start_to_end,\n  sum(arraySum(mapValues(end_to_start))) AS end_to_start\nFROM iot.traffic\nWHERE $__timeFilter(ts) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY time\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Speed distribution (iot.vehicles)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts_entry) AS time,\n  quantile(0.5)(speed_kmh) AS p50,\n  quantile(0.85)(speed_kmh) AS p85,\n  quantile(0.95)(speed_kmh) AS p95\nFROM iot.vehicles\nWHERE $__timeFilter(ts_entry) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY time\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "velocitykmh",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Consensus quality (iot.vehicles)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts_entry) AS time,\n  avg(agreement) AS agreement,\n  avg(confidence) AS confidence,\n  countIf(sensors < 3) / count() AS incomplete_share\nFROM iot.vehicles\nWHERE $__timeFilter(ts_entry) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY time\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      }
+    },
+    {
+      "type": "row",
+      "title": "Device health (reported by the devices)",
+      "id": 12,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Devices by latest status (last 10 min)",
+      "description": "Counts the 3 devices per tunnel by their latest self-reported status. The window is on device time, so a skewed sensor clock empties this.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT status, count() AS sensors\nFROM (\n  SELECT sensor_id, argMax(status, ts) AS status\n  FROM iot.sensor_health\n  WHERE ts > now() - INTERVAL 10 MINUTE AND tunnel_id IN (${tunnel:singlequote})\n  GROUP BY sensor_id\n)\nGROUP BY status\nORDER BY status",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "transformations": [],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "No device reported in the last 10 min - the devices are down, or their clocks are skewed."
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "h": 9,
+        "w": 6,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Miss rate by position",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, position,\n  sum(missed) / greatest(sum(missed + detections), 1) AS miss_rate\nFROM iot.sensor_health\nWHERE $__timeFilter(ts) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY time, position\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 14,
+      "gridPos": {
+        "h": 9,
+        "w": 9,
+        "x": 6,
+        "y": 32
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Missed detections and duplicates",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time, sum(missed) AS missed, sum(duplicates) AS duplicates\nFROM iot.sensor_health\nWHERE $__timeFilter(ts) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY time\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 15,
+      "gridPos": {
+        "h": 9,
+        "w": 9,
+        "x": 15,
+        "y": 32
+      }
+    },
+    {
+      "type": "table",
+      "title": "Unhealthy devices (latest report in range)",
+      "description": "Devices self-report their condition; empty means all of them are healthy.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT sensor_id, any(tunnel_id) AS tunnel, argMax(device_id, ts) AS device_id,\n  argMax(device_serial, ts) AS serial, any(position) AS position,\n  argMax(status, ts) AS status,\n  argMax(missed, ts) AS missed,\n  argMax(duplicates, ts) AS duplicates,\n  argMax(detections, ts) AS detections,\n  max(ts) AS last_report\nFROM iot.sensor_health\nWHERE $__timeFilter(ts) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY sensor_id\nHAVING status != 'ok'\nORDER BY missed DESC\nLIMIT 100",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "transformations": [],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "Every device that reported in this range reported ok."
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 16,
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      }
+    },
+    {
+      "type": "row",
+      "title": "Data quality",
+      "id": 17,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Rejected detections by reason (iot.detections_rejected)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(processed_ts) AS time, reason, count() AS rejected\nFROM iot.detections_rejected\nWHERE $__timeFilter(processed_ts)\nGROUP BY time, reason\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "No rejections in this range - every detection was accepted.",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pipeline latency p95 (iot.detections)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time,\n  quantile(0.95)(mqtt_latency_ms) / 1000 AS sensor_to_tbmq,\n  quantile(0.95)(process_latency_ms) / 1000 AS tbmq_to_processor,\n  quantile(0.95)(ingest_latency_ms) / 1000 AS tbmq_to_clickhouse\nFROM iot.detections\nWHERE $__timeFilter(ts) AND tunnel_id IN (${tunnel:singlequote})\nGROUP BY time\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 19,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      }
+    }
+  ]
+}

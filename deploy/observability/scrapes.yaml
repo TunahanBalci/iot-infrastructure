@@ -1,0 +1,458 @@
+# Scrape targets of the IoT platform for vmagent (VictoriaMetrics operator CRs, namespace monitoring).
+# vmagent selects every VM*Scrape in the cluster (selectAllByDefault). Each target sets an explicit
+# `job` so alert rules and dashboards do not depend on generated job names.
+#
+# Kubernetes, node, kubelet/cAdvisor, CoreDNS, Grafana and the VictoriaMetrics components are scraped
+# by objects of the victoria-metrics-k8s-stack release; VictoriaLogs/VictoriaTraces by their charts.
+
+# --- TBMQ broker + integration executor (Spring Boot actuator, no auth) -----------------------------
+# Broker: container port "http" 8083, integration executor: "http" 8082; both /actuator/prometheus
+# (upstream manifests set METRICS_ENDPOINTS_EXPOSE=prometheus on the broker; the IE default
+# "health,info,prometheus" also exposes it).
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: tbmq
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [thingsboard-mqtt-broker]
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [tbmq, tbmq-integration-executor]
+  podMetricsEndpoints:
+    - port: http
+      path: /actuator/prometheus
+      scrape_interval: 10s
+      relabelConfigs:
+        - sourceLabels: [__meta_kubernetes_pod_label_app]
+          targetLabel: job
+      metricRelabelConfigs:
+        # Spring/Tomcat/logback noise
+        - action: drop
+          sourceLabels: [__name__]
+          regex: (tomcat_.*|logback_events_total|http_server_requests_seconds_max|executor_.*|application_(started|ready)_time_seconds|disk_(free|total)_bytes)
+---
+# --- Strimzi Kafka: brokers (JMX exporter) + Kafka Exporter, both clusters ------------------------
+# Pods labelled strimzi.io/kind=Kafka with a container port "tcp-prometheus" (9404): broker/controller
+# pods once Kafka.spec.kafka.metricsConfig is set, and <cluster>-kafka-exporter once
+# Kafka.spec.kafkaExporter is set. Strimzi's NetworkPolicies open 9404 to every namespace.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: strimzi-kafka
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [thingsboard-mqtt-broker, iot-pipeline]
+  selector:
+    matchLabels:
+      strimzi.io/kind: Kafka
+  podMetricsEndpoints:
+    - port: tcp-prometheus
+      path: /metrics
+      scrape_interval: 10s
+      relabelConfigs:
+        # strimzi_io_cluster, strimzi_io_name (<cluster>-kafka | <cluster>-kafka-exporter), strimzi_io_pool_name, ...
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(strimzi_io_.+)
+        - sourceLabels: [__meta_kubernetes_pod_label_strimzi_io_name]
+          regex: .+-kafka-exporter
+          targetLabel: job
+          replacement: kafka-exporter
+        - sourceLabels: [__meta_kubernetes_pod_label_strimzi_io_name]
+          regex: .+-kafka
+          targetLabel: job
+          replacement: kafka
+      metricRelabelConfigs:
+        # Kafka request metrics are ~75% of the series: keep total time for client-facing requests only.
+        - action: drop
+          sourceLabels: [__name__]
+          regex: kafka_network_requestmetrics_(throttletimems|responsesendtimems|responsequeuetimems|requestqueuetimems|requestbytes|remotetimems|localtimems|messageconversionstimems|temporarymemorybytes)(_count_total)?
+        # ... and of those only Produce/Fetch/FetchConsumer (RE2 has no negative lookahead: mark, then drop unmarked)
+        - sourceLabels: [__name__, request]
+          regex: kafka_network_requestmetrics_totaltimems(_count_total)?;(Produce|Fetch|FetchConsumer)
+          targetLabel: __tmp_keep
+          replacement: "1"
+        - action: drop
+          sourceLabels: [__name__, __tmp_keep]
+          regex: kafka_network_requestmetrics_totaltimems(_count_total)?;
+        - action: labeldrop
+          regex: __tmp_keep
+        - action: drop
+          sourceLabels: [__name__]
+          regex: kafka_cluster_partition_.*|kafka_log_log_(logstartoffset|logendoffset|numlogsegments|retentionsizein_percent)|kafka_server_socket_server_metrics_.*(_software|_tls_info)
+        # Kafka Exporter: offsets/leaders per partition are not used (lag is)
+        - action: drop
+          sourceLabels: [__name__]
+          regex: kafka_topic_partition_(leader|leader_is_preferred|oldest_offset|replicas)|go_.*|promhttp_.*
+---
+# --- Strimzi cluster operator ------------------------------------------------------------------------
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: strimzi-cluster-operator
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [strimzi-system]
+  selector:
+    matchLabels:
+      strimzi.io/kind: cluster-operator
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      scrape_interval: 60s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: strimzi-cluster-operator
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: (jvm_gc_.*|jvm_buffer_.*|jvm_classes_.*|vertx_.*|executor_.*|process_files_.*)
+---
+# --- CloudNativePG: instances of Cluster tbmq-db (port "metrics" 9187) + operator ------------------
+# spec.monitoring.enablePodMonitor is deprecated in CNPG 1.30 (and needs prometheus-operator CRDs).
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: cnpg-tbmq-db
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [thingsboard-mqtt-broker]
+  selector:
+    matchLabels:
+      cnpg.io/cluster: tbmq-db
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      scrape_interval: 15s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: cnpg
+        - sourceLabels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+          targetLabel: cnpg_cluster
+        - sourceLabels: [__meta_kubernetes_pod_label_cnpg_io_instanceRole]
+          targetLabel: role
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: cnpg-operator
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [cnpg-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      scrape_interval: 60s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: cnpg-operator
+---
+# --- Valkey (redis_exporter sidecar "metrics" 9121 in StatefulSet tbmq-valkey) ----------------------
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: valkey
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [thingsboard-mqtt-broker]
+  selector:
+    matchLabels:
+      app: tbmq-valkey
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      scrape_interval: 15s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: valkey
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: (go_.*|promhttp_.*|redis_commands_(duration_seconds_total|failed_calls_total|rejected_calls_total|latencies_usec.*)|redis_latency_percentiles_usec.*)
+---
+# --- ClickHouse and SeaweedFS (contract addresses; single replica each) -----------------------------
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMStaticScrape
+metadata:
+  name: iot-storage
+  namespace: monitoring
+spec:
+  jobName: iot-storage
+  targetEndpoints:
+    - targets: ["clickhouse.iot-storage.svc:9363"]
+      path: /metrics
+      scrape_interval: 10s
+      labels:
+        namespace: iot-storage
+        service: clickhouse
+      relabelConfigs:
+        - targetLabel: job
+          replacement: clickhouse
+      metricRelabelConfigs:
+        # ~9.5k series per scrape: keep the metrics used by rules/dashboards
+        - action: keep
+          sourceLabels: [__name__]
+          regex: ClickHouse(ProfileEvents_(Query|SelectQuery|InsertQuery|FailedQuery|FailedInsertQuery|QueryTimeMicroseconds|InsertQueryTimeMicroseconds|InsertedRows|InsertedBytes|DelayedInserts|RejectedInserts|DelayedInsertsMilliseconds|Merge|MergedRows|Kafka.*|S3(Read|Write)Requests(Count|Errors)|S3(Read|Write)Microseconds|DiskS3(Read|Write)Requests(Count|Errors)|ReplicatedPartFailedFetches|ReplicatedDataLoss)|Metrics_(Query|Merge|PartsActive|DelayedInserts|MemoryTracking|ReadonlyReplica|Kafka.*|BackgroundMergesAndMutationsPoolTask|TCPConnection|HTTPConnection)|AsyncMetrics_(Disk(Available|Total|Used|Unreserved)|ReplicasMax(AbsoluteDelay|RelativeDelay|QueueSize)|MaxPartCountForPartition|Uptime|MemoryResident|CGroupMemory(Total|Used)|TotalBytesOfMergeTreeTables|TotalRowsOfMergeTreeTables|TotalPartsOfMergeTreeTables|FilesystemCache(Bytes|Capacity))|ErrorMetric_(TOO_MANY_PARTS|S3_ERROR|KAFKA_ERROR|CANNOT_PARSE_.*|MEMORY_LIMIT_EXCEEDED))
+    - targets: ["seaweedfs.iot-storage.svc:9327"]
+      path: /metrics
+      scrape_interval: 60s
+      labels:
+        namespace: iot-storage
+        service: seaweedfs
+      relabelConfigs:
+        - targetLabel: job
+          replacement: seaweedfs
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: (go_.*|promhttp_.*|SeaweedFS_.*_seconds_bucket|SeaweedFS_filer.*)
+---
+# --- KEDA operator (needs Helm value prometheus.operator.enabled=true: port "metrics" 8080) ---------
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: keda
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [keda]
+  selector:
+    matchLabels:
+      app: keda-operator
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      scrape_interval: 10s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: keda-operator
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: (go_.*|workqueue_.*|controller_runtime_reconcile_time_seconds_bucket|rest_client_.*|certwatcher_.*)
+---
+# --- Cilium agent (+ Hubble metrics), operator, cilium-envoy (hostNetwork pods in kube-system) -------
+# Agent needs prometheus.enabled=true (9962) and hubble.metrics.enabled (9965); operator (9963) and
+# cilium-envoy (9964) metrics are on by default in chart 1.20.1.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: cilium
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchExpressions:
+      - key: k8s-app
+        operator: In
+        values: [cilium, cilium-envoy]
+  podMetricsEndpoints:
+    - port: prometheus
+      path: /metrics
+      scrape_interval: 30s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: cilium-agent
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: (go_.*|cilium_k8s_client_api_latency_time_seconds_bucket|cilium_kvstore_.*|cilium_bpf_syscall_duration_seconds_bucket|cilium_policy_l7_.*|cilium_proxy_upstream_reply_seconds_bucket|cilium_datapath_conntrack_gc_duration_seconds_bucket|workqueue_.*)
+    - port: hubble-metrics
+      path: /metrics
+      scrape_interval: 30s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: hubble
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+    - port: envoy-metrics
+      path: /metrics
+      scrape_interval: 60s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: cilium-envoy
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: envoy_.*_bucket
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: cilium-operator
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [kube-system]
+  selector:
+    matchLabels:
+      io.cilium/app: operator
+  podMetricsEndpoints:
+    - port: prometheus
+      path: /metrics
+      scrape_interval: 60s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: cilium-operator
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: (go_.*|workqueue_.*|rest_client_.*)
+---
+# --- Envoy Gateway: controller (/metrics) and proxies (/stats/prometheus), both port "metrics" 19001 --
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: envoy-gateway
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [envoy-gateway-system]
+  selector:
+    matchLabels:
+      control-plane: envoy-gateway
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      scrape_interval: 60s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: envoy-gateway
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: (go_.*|workqueue_.*|rest_client_.*|controller_runtime_.*_bucket|.*_duration_seconds_bucket)
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: envoy-proxy
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [envoy-gateway-system]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: envoy
+      app.kubernetes.io/component: proxy
+  podMetricsEndpoints:
+    - port: metrics
+      path: /stats/prometheus
+      params:
+        usedonly: [""]
+      scrape_interval: 30s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: envoy-proxy
+      metricRelabelConfigs:
+        - action: keep
+          sourceLabels: [__name__]
+          regex: envoy_(server_(live|uptime|memory_allocated|total_connections)|cluster_upstream_(rq_xx|rq_total|rq_timeout|cx_active|cx_connect_fail)|cluster_membership_(healthy|total)|http_downstream_(rq_xx|rq_total|cx_active)|listener_downstream_cx_active|http_downstream_rq_time_(sum|count))
+---
+# --- cert-manager controller (port "http-metrics" 9402, enabled by default) --------------------------
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: cert-manager
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [cert-manager]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/component: controller
+  podMetricsEndpoints:
+    - port: http-metrics
+      path: /metrics
+      scrape_interval: 60s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: cert-manager
+      metricRelabelConfigs:
+        - action: keep
+          sourceLabels: [__name__]
+          regex: certmanager_.*|process_resident_memory_bytes|up
+---
+# --- Stream processing (contract: container port "http" 8080, /metrics) -----------------------------
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: iot-pipeline
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [iot-pipeline]
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [telemetry-processor, consensus]
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      scrape_interval: 10s
+      relabelConfigs:
+        - sourceLabels: [__meta_kubernetes_pod_label_app]
+          targetLabel: job
+---
+# --- Observability layer itself: OTel collector self-metrics, Vector ------------------------------
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: otel-collector
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [monitoring]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opentelemetry-collector
+      app.kubernetes.io/instance: otel-collector
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      scrape_interval: 10s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: otel-collector
+---
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: vector
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [monitoring]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vector
+      app.kubernetes.io/instance: vlogs
+  podMetricsEndpoints:
+    - port: prom-exporter
+      path: /metrics
+      scrape_interval: 30s
+      relabelConfigs:
+        - targetLabel: job
+          replacement: vector
+      metricRelabelConfigs:
+        - action: drop
+          sourceLabels: [__name__]
+          regex: vector_.*_bucket|vector_(k8s_.*|internal_metrics_.*|source_lag_time_seconds.*|component_latency_.*)

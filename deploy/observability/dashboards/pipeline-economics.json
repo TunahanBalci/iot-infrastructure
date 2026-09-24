@@ -1,0 +1,4264 @@
+{
+  "uid": "iot-pipeline-economics",
+  "title": "Pipeline economics",
+  "tags": [
+    "iot",
+    "pipeline",
+    "cost"
+  ],
+  "description": "Per component: what it consumes (CPU, memory), what it moves (msg/s per hop and the deltas between hops), how long it takes (latency per hop) and what it costs (millicores of CPU per msg/s of pipeline throughput). The headline row divides each stage's CPU by the TBMQ incoming publish rate, so a stage that is expensive per message stands out regardless of load. TLS CAVEAT: nothing in this cluster attributes CPU to TLS -- neither the kernel, the JVM nor cAdvisor separates encryption from the rest of a process. The TLS row therefore shows only proxies (how many sessions are TLS, handshake/accept rate, bytes moved over those sockets); no panel here claims to measure the CPU cost of TLS, and none should be read that way.",
+  "editable": false,
+  "graphTooltip": 1,
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "refresh": "30s",
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "1h"
+    ],
+    "time_options": [
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "3h",
+      "6h",
+      "12h",
+      "24h",
+      "7d",
+      "30d"
+    ]
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "iot"
+      ],
+      "asDropdown": true,
+      "title": "IoT dashboards",
+      "includeVars": false,
+      "keepTime": true
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Cost per message (headline)",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Pipeline message rate",
+      "description": "TBMQ incoming publishes: the denominator of every cost-per-message panel on this board.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 2,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Chain CPU",
+      "description": "Cores burned by everything in thingsboard-mqtt-broker + iot-pipeline + iot-storage.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\",pod=~\".+\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 3,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Chain cost per message",
+      "description": "Millicores per msg/s across the whole chain. This includes the fixed overhead that does not scale with load, so it falls as throughput rises.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\",pod=~\".+\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mc/(msg/s)",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 4,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Observability cost per message",
+      "description": "What it costs to watch the pipeline: the whole monitoring namespace per pipeline msg/s.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"monitoring\",pod=~\".+\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mc/(msg/s)",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 5,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Cost of a TBMQ broker RPC",
+      "description": "Internal Kafka CPU divided by its Produce+Fetch+OffsetCommit rate.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-kafka-dual-role-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(kafka_network_requestmetrics_requests_total{job=\"kafka\",strimzi_io_cluster=\"tbmq-kafka\",request=~\"Produce|FetchConsumer|OffsetCommit\"}[$__rate_interval])), 1)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mc/(RPC/s)",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 6,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Cost of an app Kafka RPC",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"app-kafka-dual-role-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(kafka_network_requestmetrics_requests_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",request=~\"Produce|FetchConsumer|OffsetCommit\"}[$__rate_interval])), 1)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mc/(RPC/s)",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 7,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      }
+    },
+    {
+      "type": "bargauge",
+      "title": "Cost per message by stage",
+      "description": "Millicores of CPU per msg/s of pipeline throughput, per stage. The longest bar is where the pipeline burns its budget. Stages 11-13 are overhead, not message path.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-[0-9]+\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "1 TBMQ broker",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-kafka-dual-role-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "2 TBMQ internal Kafka",
+          "refId": "B",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-integration-executor-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "3 integration executor",
+          "refId": "C",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"app-kafka-dual-role-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "4 app Kafka",
+          "refId": "D",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"telemetry-processor-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "5 telemetry-processor",
+          "refId": "E",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"consensus-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "6 consensus",
+          "refId": "F",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-storage\",pod=~\"clickhouse-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "7 ClickHouse",
+          "refId": "G",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-storage\",pod=~\"seaweedfs-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "8 SeaweedFS",
+          "refId": "H",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-db-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "9 PostgreSQL",
+          "refId": "I",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-valkey-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "10 Valkey",
+          "refId": "J",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline|thingsboard-mqtt-broker\",pod=~\".*-kafka-exporter-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "11 Kafka exporters",
+          "refId": "K",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"strimzi-system|iot-pipeline|thingsboard-mqtt-broker\",pod=~\"strimzi-cluster-operator-.*|.*-entity-operator-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "12 Strimzi operators",
+          "refId": "L",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"monitoring\",pod=~\".+\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "13 observability",
+          "refId": "M",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mc/(msg/s)",
+          "min": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "color",
+        "namePlacement": "left",
+        "minVizWidth": 8,
+        "minVizHeight": 16,
+        "maxVizHeight": 300,
+        "sizing": "auto",
+        "legend": {
+          "showLegend": false
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost per message by stage over time",
+      "description": "Stacked: the top of the stack is the chain cost per message. A stage whose band widens while the others hold is getting less efficient, not just busier.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-[0-9]+\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "1 TBMQ broker",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-kafka-dual-role-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "2 TBMQ internal Kafka",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-integration-executor-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "3 integration executor",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"app-kafka-dual-role-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "4 app Kafka",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"telemetry-processor-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "5 telemetry-processor",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"consensus-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "6 consensus",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-storage\",pod=~\"clickhouse-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "7 ClickHouse",
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-storage\",pod=~\"seaweedfs-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "8 SeaweedFS",
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-db-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "9 PostgreSQL",
+          "refId": "I"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-valkey-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "10 Valkey",
+          "refId": "J"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline|thingsboard-mqtt-broker\",pod=~\".*-kafka-exporter-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "11 Kafka exporters",
+          "refId": "K"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"strimzi-system|iot-pipeline|thingsboard-mqtt-broker\",pod=~\"strimzi-cluster-operator-.*|.*-entity-operator-.*\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "12 Strimzi operators",
+          "refId": "L"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "1000 * sum(rate(container_cpu_usage_seconds_total{namespace=~\"monitoring\",pod=~\".+\",container!=\"\",image!=\"\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "13 observability",
+          "refId": "M"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: mc/(msg/s)",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "h": 12,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      }
+    },
+    {
+      "type": "row",
+      "title": "Resource per component",
+      "id": 10,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU cores by stage",
+      "description": "container_cpu_usage_seconds_total, pause containers excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-[0-9]+\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "1 TBMQ broker",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-kafka-dual-role-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "2 TBMQ internal Kafka",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-integration-executor-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "3 integration executor",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"app-kafka-dual-role-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "4 app Kafka",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"telemetry-processor-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "5 telemetry-processor",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline\",pod=~\"consensus-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "6 consensus",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-storage\",pod=~\"clickhouse-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "7 ClickHouse",
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-storage\",pod=~\"seaweedfs-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "8 SeaweedFS",
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-db-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "9 PostgreSQL",
+          "refId": "I"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-valkey-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "10 Valkey",
+          "refId": "J"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"iot-pipeline|thingsboard-mqtt-broker\",pod=~\".*-kafka-exporter-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "11 Kafka exporters",
+          "refId": "K"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"strimzi-system|iot-pipeline|thingsboard-mqtt-broker\",pod=~\"strimzi-cluster-operator-.*|.*-entity-operator-.*\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "12 Strimzi operators",
+          "refId": "L"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"monitoring\",pod=~\".+\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "13 observability",
+          "refId": "M"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory working set by stage",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-[0-9]+\",container!=\"\",image!=\"\"})",
+          "legendFormat": "1 TBMQ broker",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-kafka-dual-role-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "2 TBMQ internal Kafka",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-integration-executor-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "3 integration executor",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"iot-pipeline\",pod=~\"app-kafka-dual-role-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "4 app Kafka",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"iot-pipeline\",pod=~\"telemetry-processor-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "5 telemetry-processor",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"iot-pipeline\",pod=~\"consensus-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "6 consensus",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"iot-storage\",pod=~\"clickhouse-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "7 ClickHouse",
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"iot-storage\",pod=~\"seaweedfs-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "8 SeaweedFS",
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-db-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "9 PostgreSQL",
+          "refId": "I"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"thingsboard-mqtt-broker\",pod=~\"tbmq-valkey-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "10 Valkey",
+          "refId": "J"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"iot-pipeline|thingsboard-mqtt-broker\",pod=~\".*-kafka-exporter-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "11 Kafka exporters",
+          "refId": "K"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"strimzi-system|iot-pipeline|thingsboard-mqtt-broker\",pod=~\"strimzi-cluster-operator-.*|.*-entity-operator-.*\",container!=\"\",image!=\"\"})",
+          "legendFormat": "12 Strimzi operators",
+          "refId": "L"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"monitoring\",pod=~\".+\",container!=\"\",image!=\"\"})",
+          "legendFormat": "13 observability",
+          "refId": "M"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      }
+    },
+    {
+      "type": "table",
+      "title": "Memory vs its limit, per pod",
+      "description": "A pod sitting near 1.0 is one OOMKill away from a restart.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\",container!=\"\",image!=\"\"})",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (kube_pod_container_resource_limits{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\",resource=\"memory\"})",
+          "legendFormat": "__auto",
+          "refId": "B",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\",container!=\"\",image!=\"\"}) / clamp_min(sum by (pod) (kube_pod_container_resource_limits{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\",resource=\"memory\"}), 1)",
+          "legendFormat": "__auto",
+          "refId": "C",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "pod",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true
+            },
+            "renameByName": {
+              "Value #A": "working set",
+              "Value #B": "limit",
+              "Value #C": "used / limit"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "used / limit",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "working set"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "limit"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "used / limit"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU throttling",
+      "description": "Only pods with a CPU limit can be throttled, and on this cluster that is KEDA and the Strimzi operator alone -- every pipeline pod runs without a CPU limit, so an empty chart here means 'no limits configured', not 'no CPU pressure'. Node-level headroom is in the Saturation row.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_seconds_total{container!=\"\"}[$__rate_interval])) > 0",
+          "legendFormat": "throttled s/s {{pod}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{container!=\"\"}[$__rate_interval])) / clamp_min(sum by (pod) (rate(container_cpu_cfs_periods_total{container!=\"\"}[$__rate_interval])), 1) > 0",
+          "legendFormat": "throttled share {{pod}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "throttled share.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 14,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      }
+    },
+    {
+      "type": "row",
+      "title": "Throughput per hop",
+      "id": 15,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages per second at each hop",
+      "description": "Hops 01-11 should sit on top of each other at the sensor rate. Hops 12-13 are one vehicle per ~3 detections, and 14-15 are larger because ClickHouse also reads vehicles/traffic/sensor-health and fans every row out into materialised views.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_published_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "01 simulator published",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval]))",
+          "legendFormat": "02 TBMQ incoming",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"tbmq-kafka\",topic=\"tbmq.msg.all\"}[$__rate_interval]))",
+          "legendFormat": "03 tbmq.msg.all",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_consumed_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval]))",
+          "legendFormat": "04 TBMQ consumed",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"tbmq-kafka\",topic=~\"tbmq\\\\.msg\\\\.ie\\\\..+\"}[$__rate_interval]))",
+          "legendFormat": "05 integration topics",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(integration_stats_counter_total{job=\"tbmq-integration-executor\",name=\"msgUplink\",state=\"success\"}[$__rate_interval]))",
+          "legendFormat": "06 IE uplink ok",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",topic=\"iot.mqtt.ingest\"}[$__rate_interval]))",
+          "legendFormat": "07 iot.mqtt.ingest",
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_consumed_total[$__rate_interval]))",
+          "legendFormat": "08 processor consumed",
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_produced_total[$__rate_interval]))",
+          "legendFormat": "09 processor produced",
+          "refId": "I"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",topic=\"iot.detections\"}[$__rate_interval]))",
+          "legendFormat": "10 iot.detections",
+          "refId": "J"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_received_total[$__rate_interval]))",
+          "legendFormat": "11 consensus received",
+          "refId": "K"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_vehicles_total[$__rate_interval]))",
+          "legendFormat": "12 consensus vehicles",
+          "refId": "L"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",topic=\"iot.vehicles\"}[$__rate_interval]))",
+          "legendFormat": "13 iot.vehicles",
+          "refId": "M"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_KafkaRowsRead{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "14 ClickHouse rows read",
+          "refId": "N"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_InsertedRows{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "15 ClickHouse rows inserted",
+          "refId": "O"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 16,
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 0,
+        "y": 39
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Delta between consecutive hops (msg/s lost or buffered)",
+      "description": "Positive = the downstream stage is behind or dropping; negative = it is catching up on a backlog. Sustained non-zero on one line localises the loss to that hop.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_published_total{job=\"simulator\"}[$__rate_interval])) - sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval]))",
+          "legendFormat": "01->02 simulator to TBMQ",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])) - sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"tbmq-kafka\",topic=\"tbmq.msg.all\"}[$__rate_interval]))",
+          "legendFormat": "02->03 TBMQ to tbmq.msg.all",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"tbmq-kafka\",topic=\"tbmq.msg.all\"}[$__rate_interval])) - sum(rate(integration_stats_counter_total{job=\"tbmq-integration-executor\",name=\"msgUplink\",state=\"success\"}[$__rate_interval]))",
+          "legendFormat": "03->06 fan-out to IE uplink",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(integration_stats_counter_total{job=\"tbmq-integration-executor\",name=\"msgUplink\",state=\"success\"}[$__rate_interval])) - sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",topic=\"iot.mqtt.ingest\"}[$__rate_interval]))",
+          "legendFormat": "06->07 IE to iot.mqtt.ingest",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",topic=\"iot.mqtt.ingest\"}[$__rate_interval])) - sum(rate(telemetry_processor_consumed_total[$__rate_interval]))",
+          "legendFormat": "07->08 ingest to processor",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_consumed_total[$__rate_interval])) - sum(rate(telemetry_processor_produced_total[$__rate_interval]))",
+          "legendFormat": "08->09 processor in to out",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",topic=\"iot.detections\"}[$__rate_interval])) - sum(rate(consensus_received_total[$__rate_interval]))",
+          "legendFormat": "10->11 detections to consensus",
+          "refId": "G"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 12,
+        "y": 39
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rejected, dropped, lost and duplicate counters",
+      "description": "Every counter in the chain that means 'this message did not make it'. Flat at zero is the expected picture.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_dropped_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "simulator dropped",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_missed_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "simulator missed",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_duplicates_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "simulator duplicates",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(droppedMsgs_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "TBMQ dropped",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(connectionRefused_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "TBMQ connections refused",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(integration_stats_counter_total{job=\"tbmq-integration-executor\",name=\"msgUplink\",state=\"failed\"}[$__rate_interval]))",
+          "legendFormat": "IE uplink failed",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_rejected_total[$__rate_interval]))",
+          "legendFormat": "processor rejected",
+          "refId": "G"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_delivery_failures_total[$__rate_interval]))",
+          "legendFormat": "processor delivery failures",
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_invalid_total[$__rate_interval]))",
+          "legendFormat": "consensus invalid",
+          "refId": "I"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_duplicates_total[$__rate_interval]))",
+          "legendFormat": "consensus duplicates",
+          "refId": "J"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_lost_total[$__rate_interval]))",
+          "legendFormat": "consensus lost",
+          "refId": "K"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_dropped_total[$__rate_interval]))",
+          "legendFormat": "consensus dropped",
+          "refId": "L"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_KafkaRowsRejected{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "ClickHouse rows rejected",
+          "refId": "M"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_KafkaMessagesFailed{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "ClickHouse messages failed",
+          "refId": "N"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rejections by reason (telemetry-processor) and rejected rows",
+      "description": "telemetry-processor is the only stage that classifies why it drops a record; the rows it writes out land in iot.detections_rejected (see the Tunnel traffic board).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (reason) (rate(telemetry_processor_rejected_total[$__rate_interval]))",
+          "legendFormat": "processor {{reason}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_rejected_produced_total[$__rate_interval]))",
+          "legendFormat": "written to the rejected topic",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 19,
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 12,
+        "y": 50
+      }
+    },
+    {
+      "type": "row",
+      "title": "Latency per hop",
+      "id": 20,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "End-to-end latency percentiles (ClickHouse, iot.detections)",
+      "description": "The only true per-message end-to-end timings in the system: they come from timestamps carried on the message itself (ts, received_ts, processed_ts, inserted_at).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time,\n  quantile(0.50)(mqtt_latency_ms) / 1000 AS sensor_to_tbmq_p50,\n  quantile(0.95)(mqtt_latency_ms) / 1000 AS sensor_to_tbmq_p95,\n  quantile(0.50)(process_latency_ms) / 1000 AS tbmq_to_processor_p50,\n  quantile(0.95)(process_latency_ms) / 1000 AS tbmq_to_processor_p95,\n  quantile(0.50)(ingest_latency_ms) / 1000 AS tbmq_to_clickhouse_p50,\n  quantile(0.95)(ingest_latency_ms) / 1000 AS tbmq_to_clickhouse_p95\nFROM iot.detections\nWHERE $__timeFilter(ts)\nGROUP BY time\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 21,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 62
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Inside TBMQ: where the broker's time goes (avg)",
+      "description": "Micrometer timers on TBMQ's actuator endpoint. 'commitSync' is per pack, and TBMQ commits once per pack -- see the Kafka efficiency row for what that costs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_consumed_pack_processing_time_seconds_sum{job=\"tbmq\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_consumed_pack_processing_time_seconds_count{job=\"tbmq\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "pack processing",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_consumed_processing_time_seconds_sum{job=\"tbmq\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_consumed_processing_time_seconds_count{job=\"tbmq\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "per message processing",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafkaConsumer_commit_seconds_sum{job=\"tbmq\"}[$__rate_interval])) / clamp_min(sum(rate(kafkaConsumer_commit_seconds_count{job=\"tbmq\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "commitSync",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafkaProducer_send_seconds_sum{job=\"tbmq\"}[$__rate_interval])) / clamp_min(sum(rate(kafkaProducer_send_seconds_count{job=\"tbmq\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "producer send",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(delivery_seconds_sum{job=\"tbmq\"}[$__rate_interval])) / clamp_min(sum(rate(delivery_seconds_count{job=\"tbmq\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "delivery to subscriber",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(clientActor_msgInQueueTime_seconds_sum{job=\"tbmq\"}[$__rate_interval])) / clamp_min(sum(rate(clientActor_msgInQueueTime_seconds_count{job=\"tbmq\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "client actor queue wait",
+          "refId": "F"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 22,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 62
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Python stages: histogram percentiles",
+      "description": "The only histograms the Python services export (telemetry_processor: batch_duration, batch_ack, event_age; consensus: event_age). Neither service times an individual record end to end, so there is no per-record p99 to show.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(telemetry_processor_batch_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "processor batch duration p95",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(telemetry_processor_batch_ack_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "processor batch ack p95",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(telemetry_processor_event_age_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "processor event age p50",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(telemetry_processor_event_age_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "processor event age p95",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(consensus_event_age_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "consensus event age p50",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(consensus_event_age_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "consensus event age p95",
+          "refId": "F"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 23,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 72
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Queued work: lag, backlog and in-flight records",
+      "description": "Kafka Exporter lag per group, plus each service's own view of its backlog. The consensus consumer group is deliberately excluded from the exporter series: consensus manages its own offsets for replay, so the exporter's number for it is meaningless -- consensus_kafka_lag_records is the real unread count.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster, consumergroup) (clamp_min(kafka_consumergroup_lag{job=\"kafka-exporter\",consumergroup=~\"msg-all-consumer-group|ie-msg-consumer-group-.+|telemetry-processor|clickhouse-.+\"}, 0))",
+          "legendFormat": "lag {{strimzi_io_cluster}}/{{consumergroup}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(consensus_kafka_lag_records)",
+          "legendFormat": "consensus unread detections",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(telemetry_processor_inflight_records)",
+          "legendFormat": "processor in-flight records",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(consensus_pending)",
+          "legendFormat": "consensus pending detections",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(consensus_out_pending)",
+          "legendFormat": "consensus producer queue",
+          "refId": "E"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 24,
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 72
+      }
+    },
+    {
+      "type": "row",
+      "title": "Kafka efficiency (the TBMQ commit overhead)",
+      "id": 25,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 82
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "TBMQ internal Kafka: RPCs per record",
+      "description": "Client-facing broker calls divided by records written to the broker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_network_requestmetrics_requests_total{job=\"kafka\",strimzi_io_cluster=\"tbmq-kafka\",request=~\"Produce|FetchConsumer|OffsetCommit\"}[$__rate_interval])) / clamp_min(sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"tbmq-kafka\",topic=\"\"}[$__rate_interval])), 1)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: RPC/record",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.25
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 26,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 83
+      }
+    },
+    {
+      "type": "stat",
+      "title": "App Kafka: RPCs per record",
+      "description": "Same formula as the panel to its left. The gap between the two numbers is the whole story.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_network_requestmetrics_requests_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",request=~\"Produce|FetchConsumer|OffsetCommit\"}[$__rate_interval])) / clamp_min(sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",strimzi_io_cluster=\"app-kafka\",topic=\"\"}[$__rate_interval])), 1)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: RPC/record",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.25
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 27,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 83
+      }
+    },
+    {
+      "type": "stat",
+      "title": "TBMQ: messages per commitSync",
+      "description": "TBMQ commits its consumer offsets once per pack, so this is also the average pack size. Small packs mean one OffsetCommit RPC and one __consumer_offsets write per handful of messages.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_consumed_total{job=\"tbmq\",statsName=\"successfulMsgs\"}[$__rate_interval])) / clamp_min(sum(rate(kafkaConsumer_commit_seconds_count{job=\"tbmq\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: msg/commit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 5
+              },
+              {
+                "color": "green",
+                "value": 20
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 28,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 83
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Integration executor: messages per iteration",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(integrationProcessor_total{job=\"tbmq-integration-executor\",statsName=\"successfulMsgs\"}[$__rate_interval])) / clamp_min(sum(rate(integrationProcessor_total{job=\"tbmq-integration-executor\",statsName=\"successfulIterations\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: msg/iteration",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 5
+              },
+              {
+                "color": "green",
+                "value": 20
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 29,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 83
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Broker RPCs per record, both clusters",
+      "description": "tbmq-kafka pays several times what app-kafka pays for the same record, because TBMQ commitSync()s after every small pack while the pipeline producers batch.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster) (rate(kafka_network_requestmetrics_requests_total{job=\"kafka\",request=~\"Produce|FetchConsumer|OffsetCommit\"}[$__rate_interval])) / clamp_min(sum by (strimzi_io_cluster) (rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",topic=\"\"}[$__rate_interval])), 1)",
+          "legendFormat": "{{strimzi_io_cluster}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: RPC/record",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 30,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 87
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by type and cluster",
+      "description": "The absolute RPC volume behind the ratio above.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster, request) (rate(kafka_network_requestmetrics_requests_total{job=\"kafka\",request=~\"Produce|FetchConsumer|OffsetCommit|ListOffsets|Heartbeat|Metadata\"}[$__rate_interval]))",
+          "legendFormat": "{{strimzi_io_cluster}} {{request}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 31,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 87
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "__consumer_offsets write rate",
+      "description": "Offset commits are real writes to a real log. On tbmq-kafka this topic carries a sizeable fraction of a record per message that ever reaches a sensor payload.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster) (rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",topic=\"__consumer_offsets\"}[$__rate_interval]))",
+          "legendFormat": "offset records/s {{strimzi_io_cluster}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",topic=\"__consumer_offsets\"}[$__rate_interval])) / clamp_min(sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval])), 1)",
+          "legendFormat": "offset records per pipeline message",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 32,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 87
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Average records per Produce request",
+      "description": "How well each cluster's producers batch. Payload topics only (__consumer_offsets is written by the coordinator, not by a Produce request).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster) (rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",topic!=\"\",topic!=\"__consumer_offsets\"}[$__rate_interval])) / clamp_min(sum by (strimzi_io_cluster) (rate(kafka_network_requestmetrics_requests_total{job=\"kafka\",request=\"Produce\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "{{strimzi_io_cluster}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: records/Produce",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 33,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 96
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Bytes in / out per broker",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster, pod) (rate(kafka_server_brokertopicmetrics_bytesin_total{job=\"kafka\",topic=\"\"}[$__rate_interval]))",
+          "legendFormat": "in {{strimzi_io_cluster}} {{pod}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster, pod) (rate(kafka_server_brokertopicmetrics_bytesout_total{job=\"kafka\",topic=\"\"}[$__rate_interval]))",
+          "legendFormat": "out {{strimzi_io_cluster}} {{pod}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 34,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 96
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Partitions, leaders and topics per cluster",
+      "description": "Every partition costs a fetch session, a log directory and a share of the broker's background work whether or not it carries traffic.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster) (kafka_server_replicamanager_partitioncount{job=\"kafka\"})",
+          "legendFormat": "partitions {{strimzi_io_cluster}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster) (kafka_server_replicamanager_leadercount{job=\"kafka\"})",
+          "legendFormat": "leaders {{strimzi_io_cluster}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster) (kafka_controller_kafkacontroller_globaltopiccount{job=\"kafka\"})",
+          "legendFormat": "topics {{strimzi_io_cluster}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster) (kafka_controller_kafkacontroller_globalpartitioncount{job=\"kafka\"})",
+          "legendFormat": "global partitions {{strimzi_io_cluster}}",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 35,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 96
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages in per topic",
+      "description": "Includes __consumer_offsets, which is exactly the point.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (strimzi_io_cluster, topic) (rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",topic!=\"\"}[$__rate_interval])) > 0",
+          "legendFormat": "{{strimzi_io_cluster}} {{topic}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 36,
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 105
+      }
+    },
+    {
+      "type": "row",
+      "title": "TLS (proxies only -- no metric attributes CPU to TLS)",
+      "id": 37,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 114
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "MQTT sessions",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(connectedSessions{job=\"tbmq\"})",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 38,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 115
+      }
+    },
+    {
+      "type": "stat",
+      "title": "TLS sessions",
+      "description": "TBMQ counts SSL sessions separately; equal to the total means every MQTT client is on TLS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(connectedSslSessions{job=\"tbmq\"})",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 39,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 115
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Share of sessions on TLS",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(connectedSslSessions{job=\"tbmq\"}) / clamp_min(sum(connectedSessions{job=\"tbmq\"}), 1)",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 40,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 115
+      }
+    },
+    {
+      "type": "stat",
+      "title": "MQTT bytes/s over TLS sockets",
+      "description": "PROXY: all traffic on the broker pods' interfaces, which is MQTT-over-TLS plus plaintext Kafka, Redis, Postgres and scrape traffic. It is an upper bound on bytes encrypted, not a measurement of them.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_network_receive_bytes_total{namespace=\"thingsboard-mqtt-broker\",pod=~\"tbmq-[0-9]+\"}[$__rate_interval])) + sum(rate(container_network_transmit_bytes_total{namespace=\"thingsboard-mqtt-broker\",pod=~\"tbmq-[0-9]+\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 41,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 115
+      }
+    },
+    {
+      "type": "stat",
+      "title": "TLS handshakes/s (proxy: connections accepted)",
+      "description": "PROXY: every accepted MQTT connection implies one TLS handshake, the most expensive single TLS operation. At steady state with long-lived sessions this is ~0, which is why handshake cost does not show up in the steady-state cost-per-message numbers.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(connectionAccepted_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 42,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 115
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Connection churn/s",
+      "description": "Disconnects plus errors: churn here turns into handshake load on the panel to the left.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(clientDisconnects_total{job=\"tbmq\"}[$__rate_interval])) + sum(rate(connectionError_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 43,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 115
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Connection and handshake events/s",
+      "description": "PROXY for TLS work. A reconnect storm is the one time TLS cost is visible, as a correlated spike here and in the broker's CPU line.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(connectionAccepted_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "accepted (= handshakes)",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(connectionRefused_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "refused",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(connectionError_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "error",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(clientDisconnects_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "disconnects",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 44,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 119
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Network bytes per pod on the message path",
+      "description": "Only the MQTT listener is TLS-terminated; the Kafka, Valkey and Postgres hops on this cluster are in-cluster plaintext. Comparing the broker's line with the rest shows how much of the total byte volume even passes through TLS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (rate(container_network_receive_bytes_total{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\"}[$__rate_interval]))",
+          "legendFormat": "rx {{pod}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (rate(container_network_transmit_bytes_total{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\"}[$__rate_interval]))",
+          "legendFormat": "tx {{pod}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 45,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 119
+      }
+    },
+    {
+      "type": "row",
+      "title": "Saturation and scaling",
+      "id": 46,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 128
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Node CPU used",
+      "description": "Cores busy across the whole node, pipeline and everything else.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "count(count by (cpu) (node_cpu_seconds_total)) - sum(rate(node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 47,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 129
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Node CPU headroom",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "avg(rate(node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.15
+              },
+              {
+                "color": "green",
+                "value": 0.3
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 48,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 129
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Node memory headroom",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.15
+              },
+              {
+                "color": "green",
+                "value": 0.3
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 49,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 129
+      }
+    },
+    {
+      "type": "stat",
+      "title": "CPU requested / allocatable",
+      "description": "What the scheduler thinks is booked. Far below actual usage means requests are set too low for the scheduler to protect anything.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(kube_pod_container_resource_requests{resource=\"cpu\"}) / sum(kube_node_status_allocatable{resource=\"cpu\"})",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 50,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 129
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Pods pending",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(kube_pod_status_phase{phase=\"Pending\"})",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 51,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 129
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Restarts on the message path (1h)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\"}[1h]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 52,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 129
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Node CPU and memory over time",
+      "description": "If 'cores busy' approaches 'cores on the node' the node is the limit; until then the pipeline is limited by its own concurrency, not by hardware.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "count(count by (cpu) (node_cpu_seconds_total)) - sum(rate(node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval]))",
+          "legendFormat": "cores busy",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\",pod=~\".+\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "cores: message path",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"monitoring\",pod=~\".+\",container!=\"\",image!=\"\"}[$__rate_interval]))",
+          "legendFormat": "cores: observability",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "count(count by (cpu) (node_cpu_seconds_total))",
+          "legendFormat": "cores on the node",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 53,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 133
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Replicas vs their KEDA maximum",
+      "description": "A stage pinned at its maximum while its lag grows is the stage that needs more room.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "kube_deployment_status_replicas{namespace=\"iot-pipeline\",deployment=~\"telemetry-processor|consensus\"}",
+          "legendFormat": "{{deployment}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "kube_statefulset_status_replicas{namespace=\"thingsboard-mqtt-broker\",statefulset=\"tbmq-integration-executor\"}",
+          "legendFormat": "{{statefulset}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=~\"keda-hpa-.+\"}",
+          "legendFormat": "max: {{horizontalpodautoscaler}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=~\"keda-hpa-.+\"}",
+          "legendFormat": "current: {{horizontalpodautoscaler}}",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 54,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 133
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "KEDA scaler value vs threshold",
+      "description": "The lag value KEDA is actually scaling on.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (scaledObject) (keda_scaler_metrics_value{job=\"keda-operator\"})",
+          "legendFormat": "{{scaledObject}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (scaledObject) (rate(keda_scaler_detail_errors_total{job=\"keda-operator\"}[$__rate_interval]))",
+          "legendFormat": "errors/s {{scaledObject}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 55,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 142
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pod restarts (1h increase) on the message path",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (namespace, pod) (increase(kube_pod_container_status_restarts_total{namespace=~\"thingsboard-mqtt-broker|iot-pipeline|iot-storage\"}[1h])) > 0",
+          "legendFormat": "{{namespace}}/{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 56,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 142
+      }
+    }
+  ]
+}

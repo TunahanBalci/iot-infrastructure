@@ -1,0 +1,840 @@
+# Alert rules of the IoT platform (vmalert, VMRule). Default Kubernetes/node/VictoriaMetrics rules come
+# from the victoria-metrics-k8s-stack sync-job; these cover the report's "critical high-value alerts"
+# plus pipeline health. Thresholds are sized for the single-node laptop prototype (config.env
+# defaults: 1000 simulated tunnels, KEDA max 3 pods, RF 1) — tune them with the workload.
+#
+# Severity: critical = data loss or an outage now; warning = degradation that needs a look; info = context.
+# Metric sources (verified): TBMQ 2.4.0 Micrometer names (camelCase kept by Micrometer 1.15's Prometheus
+# naming: StatsType print names, dots -> "_"), Strimzi 1.2.0 JMX exporter example config + Kafka Exporter
+# 1.9.0, CloudNativePG 1.30 default queries, redis_exporter v1.91.1, ClickHouse 26.8 /metrics, KEDA 2.20,
+# cert-manager v1.21, telemetry-processor/consensus sources in apps/.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: iot-platform
+  namespace: monitoring
+spec:
+  groups:
+    # ======================================================================================================
+    - name: iot-mqtt.tbmq
+      interval: 15s
+      rules:
+        # Sessions: connectedSessions = live MQTT channels on the node (gauge).
+        - alert: TBMQConnectionsDropped
+          expr: |
+            sum(connectedSessions{job="tbmq"})
+              < 0.5 * max_over_time(sum(connectedSessions{job="tbmq"})[30m:1m])
+            and max_over_time(sum(connectedSessions{job="tbmq"})[30m:1m]) > 20
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: MQTT connections dropped by more than half
+            description: >-
+              TBMQ holds {{ $value | humanize }} live MQTT connections, less than half of the 30-minute
+              maximum. Devices lost connectivity or the broker/LB path failed.
+        # Reconnect storm: more than half of the connected sessions (re)connected within 5 minutes.
+        - alert: TBMQReconnectStorm
+          expr: |
+            sum(rate(connectionAccepted_total{job="tbmq"}[5m])) * 300
+              > 0.5 * sum(connectedSessions{job="tbmq"})
+            and sum(rate(connectionAccepted_total{job="tbmq"}[5m])) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: MQTT reconnect storm
+            description: >-
+              {{ $value | humanize }} connections per 5 minutes are accepted, more than half of the live sessions.
+              Clients are flapping (keep-alive timeouts, pod restarts, certificate or network problems).
+        - alert: TBMQConnectionRefusalsHigh
+          expr: |
+            sum by (pod) (rate(connectionRefused_total{job="tbmq"}[5m]) + rate(connectionError_total{job="tbmq"}[5m])) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: TBMQ refuses or fails more than 1 connection/s
+            description: >-
+              {{ $labels.pod }}: {{ $value | humanize }} refused/failed MQTT connections per second
+              (authentication, certificate or ACL problems, or clients retrying in a loop).
+        # Publish rate: incomingPublishMsg.published = PUBLISH messages from clients written to Kafka.
+        - alert: TBMQPublishRateDrop
+          expr: |
+            sum(rate(incomingPublishMsg_published_total{job="tbmq",statsName="totalMsgs"}[5m]))
+              < 0.5 * sum(rate(incomingPublishMsg_published_total{job="tbmq",statsName="totalMsgs"}[5m] offset 30m))
+            and sum(rate(incomingPublishMsg_published_total{job="tbmq",statsName="totalMsgs"}[5m] offset 30m)) > 10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: MQTT publish rate dropped by more than half
+            description: >-
+              Incoming MQTT publishes fell to {{ $value | humanize }}/s, less than half of 30 minutes ago.
+        - alert: TBMQPublishFailures
+          expr: |
+            sum by (pod) (rate(incomingPublishMsg_published_total{job="tbmq",statsName="failedMsgs"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: TBMQ fails to persist incoming publishes to Kafka
+            description: "{{ $labels.pod }}: {{ $value | humanize }} failed publishes/s (internal Kafka unavailable or slow)."
+        - alert: TBMQDroppedMessages
+          expr: sum by (pod) (rate(droppedMsgs_total{job="tbmq"}[5m])) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: TBMQ drops messages
+            description: >-
+              {{ $labels.pod }} drops {{ $value | humanize }} msg/s (non-persistent/QoS0 deliveries that could
+              not be written to subscriber sockets, flow-control overflow).
+        # QoS 1/2 acknowledgement latency. TBMQ 2.4.0 measures it only for persistent APPLICATION subscribers
+        # (appProcessor.latency, packetType puback|pubrec|pubcomp). There is no PUBACK latency metric for
+        # device publishes; TBMQDeliveryLatencyHigh (socket write) and the Kafka producer alert are the proxies.
+        - alert: TBMQQoSAckLatencyHigh
+          expr: |
+            max by (pod, packetType) (
+              rate(appProcessor_latency_seconds_sum{job="tbmq"}[5m]) / rate(appProcessor_latency_seconds_count{job="tbmq"}[5m])
+            ) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: QoS {{ $labels.packetType }} acknowledgement latency above 1s
+            description: "{{ $labels.pod }}: average {{ $labels.packetType }} latency {{ $value | humanizeDuration }} for APPLICATION subscribers."
+        - alert: TBMQQoSAckTimeouts
+          expr: |
+            sum by (pod, clientId) (rate(appProcessor_total{job="tbmq",statsName=~"timeoutPublishMsgs|timeoutPubRelMsgs"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: QoS 1/2 deliveries time out for {{ $labels.clientId }}
+            description: "{{ $labels.pod }}: {{ $value | humanize }}/s PUBLISH/PUBREL deliveries to {{ $labels.clientId }} time out waiting for ACK."
+        - alert: TBMQDeliveryLatencyHigh
+          expr: |
+            max by (pod) (rate(delivery_seconds_sum{job="tbmq"}[5m]) / rate(delivery_seconds_count{job="tbmq"}[5m])) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: TBMQ delivery to subscriber sockets slower than 500ms
+            description: "{{ $labels.pod }}: average time until PUBLISH bytes are written to the socket is {{ $value | humanizeDuration }}."
+        # JVM memory pressure (Micrometer JVM binders; pools with max -1 are ignored).
+        - alert: TBMQJvmHeapPressure
+          expr: |
+            sum by (namespace, pod) (jvm_memory_used_bytes{job=~"tbmq|tbmq-integration-executor",area="heap"})
+              / sum by (namespace, pod) (jvm_memory_max_bytes{job=~"tbmq|tbmq-integration-executor",area="heap"} > 0) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: TBMQ JVM heap above 90%
+            description: "{{ $labels.pod }} uses {{ $value | humanizePercentage }} of its max heap."
+        - alert: TBMQJvmGcPressure
+          expr: |
+            sum by (namespace, pod) (rate(jvm_gc_pause_seconds_sum{job=~"tbmq|tbmq-integration-executor"}[5m])) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: TBMQ spends more than 10% of the time in GC pauses
+            description: "{{ $labels.pod }} is paused {{ $value | humanizePercentage }} of the time by GC."
+        # Internal Kafka producer: kafkaProducer.send measures the send() call (buffer/metadata blocking), the
+        # broker side is the Produce request time on tbmq-kafka (KafkaProduceLatencyHigh).
+        - alert: TBMQKafkaProducerLatencyHigh
+          expr: |
+            max by (pod) (rate(kafkaProducer_send_seconds_sum{job=~"tbmq|tbmq-integration-executor"}[5m])
+              / rate(kafkaProducer_send_seconds_count{job=~"tbmq|tbmq-integration-executor"}[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: TBMQ Kafka producer send() blocks longer than 50ms
+            description: "{{ $labels.pod }}: average send time {{ $value | humanizeDuration }} (producer buffer full or broker slow)."
+        - alert: TBMQIntegrationUplinkFailures
+          expr: |
+            sum by (pod, type) (rate(integration_stats_counter_total{job="tbmq-integration-executor",name="msgUplink",state="failed"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: TBMQ integration executor fails to forward messages
+            description: "{{ $labels.pod }}: {{ $value | humanize }} failed {{ $labels.type }} uplink messages/s to the application Kafka."
+
+    # ======================================================================================================
+    - name: iot-kafka
+      interval: 15s
+      rules:
+        - alert: KafkaUnderReplicatedPartitions
+          expr: sum by (namespace, strimzi_io_cluster) (kafka_server_replicamanager_underreplicatedpartitions{job="kafka"}) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Kafka {{ $labels.strimzi_io_cluster }}: under-replicated partitions"
+            description: "{{ $value }} partitions have fewer in-sync replicas than replicas."
+        - alert: KafkaUnderMinIsrPartitions
+          expr: sum by (namespace, strimzi_io_cluster) (kafka_server_replicamanager_underminisrpartitioncount{job="kafka"}) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Kafka {{ $labels.strimzi_io_cluster }}: partitions below min.insync.replicas"
+            description: "{{ $value }} partitions reject acks=all producers (TBMQ, pipeline services)."
+        - alert: KafkaIsrShrinks
+          expr: sum by (namespace, strimzi_io_cluster) (increase(kafka_server_replicamanager_isrshrinks_total{job="kafka"}[10m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Kafka {{ $labels.strimzi_io_cluster }}: ISR shrink events"
+            description: "{{ $value | humanize }} ISR shrinks in 10 minutes (slow or restarting brokers)."
+        - alert: KafkaOfflinePartitions
+          expr: sum by (namespace, strimzi_io_cluster) (kafka_controller_kafkacontroller_offlinepartitionscount{job="kafka"}) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Kafka {{ $labels.strimzi_io_cluster }}: offline partitions"
+            description: "{{ $value }} partitions have no leader."
+        - alert: KafkaNoActiveController
+          expr: sum by (namespace, strimzi_io_cluster) (kafka_controller_kafkacontroller_activecontrollercount{job="kafka"}) != 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Kafka {{ $labels.strimzi_io_cluster }}: {{ $value }} active KRaft controllers (expected 1)"
+        - alert: KafkaProduceLatencyHigh
+          expr: |
+            max by (namespace, strimzi_io_cluster, pod) (kafka_network_requestmetrics_totaltimems{job="kafka",request="Produce",quantile="0.99"}) > 500
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Kafka {{ $labels.strimzi_io_cluster }}: produce p99 above 500ms"
+            description: "{{ $labels.pod }}: Produce request p99 {{ $value | humanize }}ms."
+        - alert: KafkaJvmHeapPressure
+          expr: |
+            sum by (namespace, pod) (jvm_memory_used_bytes{job="kafka",area="heap"}) / sum by (namespace, pod) (jvm_memory_max_bytes{job="kafka",area="heap"} > 0) > 0.9
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Kafka broker {{ $labels.pod }}: heap above 90%"
+
+        # --- consumer-group lag (Kafka Exporter; lag -1 = partition without committed offset) ------------
+        # telemetry-processor: KEDA scales out at PROCESSOR_LAG_THRESHOLD=20000 per pod, max 3 pods.
+        - alert: KafkaConsumerLagTelemetryProcessor
+          expr: |
+            sum by (namespace, consumergroup, topic) (clamp_min(kafka_consumergroup_lag{job="kafka-exporter",namespace="iot-pipeline",consumergroup="telemetry-processor"}, 0)) > 60000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: telemetry-processor lag beyond KEDA capacity
+            description: "Lag {{ $value | humanize }} on {{ $labels.topic }} (KEDA max replicas are not keeping up)."
+        # consensus commits the offset of the oldest vehicle still in transit, so its consumer-group
+        # lag is a window of minutes even when it is completely up to date (1.7M records at 4k msg/s,
+        # bounded by the slowest vehicle in the longest tunnel). Alert on the unread-detections gauge
+        # the service exports instead — the same signal KEDA scales on.
+        - alert: KafkaConsumerLagConsensus
+          expr: |
+            sum(consensus_kafka_lag_records) > 600000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: consensus is falling behind
+            description: "{{ $value | humanize }} detections unread; vehicle events are delayed."
+        - alert: KafkaConsumerLagClickHouse
+          expr: |
+            sum by (namespace, consumergroup, topic) (clamp_min(kafka_consumergroup_lag{job="kafka-exporter",namespace="iot-pipeline",consumergroup=~"clickhouse-.+"}, 0)) > 50000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ClickHouse ingestion lag on {{ $labels.topic }}"
+            description: "{{ $labels.consumergroup }} is {{ $value | humanize }} messages behind (ClickHouse insert latency / Kafka engine stalled)."
+        # TBMQ integration executor on the internal Kafka: TBMQ_IE_LAG_THRESHOLD=5000 per integration, max 3.
+        - alert: KafkaConsumerLagTbmqIntegration
+          expr: |
+            sum by (namespace, consumergroup, topic) (clamp_min(kafka_consumergroup_lag{job="kafka-exporter",namespace="thingsboard-mqtt-broker",consumergroup=~"ie-msg-consumer-group-.+"}, 0)) > 15000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: TBMQ integration executor lag
+            description: "{{ $labels.consumergroup }} is {{ $value | humanize }} messages behind on {{ $labels.topic }}."
+        # TBMQ's own processing of incoming publishes (msg-all-consumer-group on tbmq.msg.all).
+        - alert: KafkaConsumerLagTbmqInternal
+          expr: |
+            sum by (namespace, consumergroup, topic) (clamp_min(kafka_consumergroup_lag{job="kafka-exporter",namespace="thingsboard-mqtt-broker",consumergroup=~"msg-all-consumer-group|device-persisted-msg-consumer-group|application-persisted-msg-consumer-group-.+"}, 0)) > 20000
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: TBMQ internal message processing lag
+            description: "{{ $labels.consumergroup }} is {{ $value | humanize }} messages behind on {{ $labels.topic }}."
+        # A group with a backlog whose committed offsets do not move at all.
+        - alert: KafkaConsumerGroupStalled
+          expr: |
+            sum by (namespace, consumergroup, topic) (clamp_min(kafka_consumergroup_lag{job="kafka-exporter"}, 0)) > 1000
+            and sum by (namespace, consumergroup, topic) (delta(kafka_consumergroup_current_offset_sum{job="kafka-exporter"}[15m])) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Consumer group {{ $labels.consumergroup }} stalled"
+            description: "{{ $labels.namespace }}: {{ $value | humanize }} messages behind on {{ $labels.topic }} and no commits for 15 minutes."
+
+    # ======================================================================================================
+    - name: iot-postgres.cnpg
+      interval: 30s
+      rules:
+        - alert: CNPGInstanceNotUp
+          expr: cnpg_collector_up{job="cnpg"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PostgreSQL {{ $labels.pod }} is down"
+            description: The CNPG instance manager runs but PostgreSQL is not accepting connections.
+        # Exactly one instance must be out of recovery. 0 = no primary (failover in progress), >1 = split brain.
+        - alert: CNPGPrimaryCountWrong
+          expr: count by (namespace, cnpg_cluster) (cnpg_pg_replication_in_recovery{job="cnpg"} == 0) != 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CNPG {{ $labels.cnpg_cluster }}: {{ $value }} primaries"
+        - alert: CNPGNoPrimary
+          expr: |
+            count by (namespace, cnpg_cluster) (cnpg_pg_replication_in_recovery{job="cnpg"})
+              unless count by (namespace, cnpg_cluster) (cnpg_pg_replication_in_recovery{job="cnpg"} == 0)
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CNPG {{ $labels.cnpg_cluster }}: no primary"
+            description: All instances are in recovery; TBMQ cannot write credentials/sessions metadata.
+        - alert: CNPGFailoverOrSwitchover
+          expr: changes(cnpg_pg_replication_in_recovery{job="cnpg"}[15m]) > 0
+          labels:
+            severity: info
+          annotations:
+            summary: "CNPG {{ $labels.cnpg_cluster }}: {{ $labels.pod }} changed role in the last 15 minutes"
+        - alert: CNPGManualSwitchoverRequired
+          expr: cnpg_collector_manual_switchover_required{job="cnpg"} > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CNPG {{ $labels.pod }}: manual switchover required"
+        - alert: CNPGReplicationLag
+          expr: max by (namespace, cnpg_cluster, pod) (cnpg_pg_replication_lag{job="cnpg"}) > 30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CNPG replica {{ $labels.pod }} lags {{ $value | humanizeDuration }}"
+        - alert: CNPGReplicaNotStreaming
+          expr: cnpg_pg_replication_in_recovery{job="cnpg"} == 1 and cnpg_pg_replication_is_wal_receiver_up{job="cnpg"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CNPG replica {{ $labels.pod }} has no WAL receiver"
+        - alert: CNPGStreamingReplicasMissing
+          expr: |
+            max by (namespace, cnpg_cluster) (
+              cnpg_pg_replication_streaming_replicas{job="cnpg"} and on (namespace, pod) (cnpg_pg_replication_in_recovery{job="cnpg"} == 0)
+            ) < (count by (namespace, cnpg_cluster) (cnpg_collector_up{job="cnpg"}) - 1)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CNPG {{ $labels.cnpg_cluster }}: only {{ $value }} streaming replicas attached to the primary"
+        - alert: CNPGFencingOn
+          expr: cnpg_collector_fencing_on{job="cnpg"} > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CNPG {{ $labels.pod }} is fenced"
+        - alert: CNPGConnectionsNearLimit
+          expr: |
+            sum by (namespace, pod) (cnpg_backends_total{job="cnpg"})
+              / max by (namespace, pod) (cnpg_pg_settings_setting{job="cnpg",name="max_connections"}) > 0.8
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PostgreSQL {{ $labels.pod }}: {{ $value | humanizePercentage }} of max_connections in use"
+
+    # ======================================================================================================
+    - name: iot-valkey
+      interval: 30s
+      rules:
+        - alert: ValkeyDown
+          expr: redis_up{job="valkey"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Valkey tbmq-valkey is down
+            description: TBMQ session state and cache are unavailable.
+        # maxmemory is 0 (unset) in deploy/tbmq-deps/valkey.yaml.tpl: compare with the container limit instead.
+        - alert: ValkeyMemoryPressure
+          expr: |
+            max by (namespace, pod) (redis_memory_used_bytes{job="valkey"})
+              / max by (namespace, pod) (kube_pod_container_resource_limits{namespace="thingsboard-mqtt-broker",container="valkey",resource="memory"}) > 0.8
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Valkey {{ $labels.pod }} uses {{ $value | humanizePercentage }} of its memory limit"
+            description: Dataset growth will OOM-kill Valkey (no maxmemory set); AOF rewrite needs extra headroom.
+        - alert: ValkeyMaxmemoryPressure
+          expr: redis_memory_used_bytes{job="valkey"} / (redis_memory_max_bytes{job="valkey"} > 0) > 0.85
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Valkey {{ $labels.pod }} uses {{ $value | humanizePercentage }} of maxmemory"
+        - alert: ValkeyEvictingKeys
+          expr: increase(redis_evicted_keys_total{job="valkey"}[10m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: Valkey evicts keys
+            description: TBMQ session/cache entries were evicted ({{ $value | humanize }} in 10 minutes).
+        - alert: ValkeyRejectedConnections
+          expr: increase(redis_rejected_connections_total{job="valkey"}[10m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: Valkey rejected {{ $value | humanize }} connections (maxclients)
+        - alert: ValkeyPersistenceFailing
+          expr: redis_aof_last_write_status{job="valkey"} == 0 or redis_aof_last_bgrewrite_status{job="valkey"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: Valkey AOF write or rewrite failed
+            description: Session state is no longer durable (disk full or I/O errors).
+
+    # ======================================================================================================
+    - name: iot-clickhouse
+      interval: 30s
+      rules:
+        # Insert latency: ClickHouse has no insert-latency histogram and InsertQueryTimeMicroseconds excludes the
+        # Kafka engine path used by the pipeline. Proxies: consumer lag of the clickhouse-* groups
+        # (KafkaConsumerLagClickHouse), DelayedInserts/RejectedInserts/TOO_MANY_PARTS (back-pressure) and the
+        # iot.detections ingest_latency_ms panel (ClickHouse SQL, not evaluable by vmalert). This rule only
+        # covers direct INSERT queries.
+        - alert: ClickHouseInsertLatencyHigh
+          expr: |
+            (rate(ClickHouseProfileEvents_InsertQueryTimeMicroseconds{job="clickhouse"}[5m]) / rate(ClickHouseProfileEvents_InsertQuery{job="clickhouse"}[5m])) / 1e6 > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse INSERT queries take {{ $value | humanizeDuration }} on average
+        - alert: ClickHouseDelayedInserts
+          expr: rate(ClickHouseProfileEvents_DelayedInserts{job="clickhouse"}[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse throttles inserts (too many parts)
+        - alert: ClickHouseRejectedInserts
+          expr: increase(ClickHouseProfileEvents_RejectedInserts{job="clickhouse"}[5m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: ClickHouse rejects inserts (TOO_MANY_PARTS)
+        - alert: ClickHouseTooManyParts
+          expr: ClickHouseAsyncMetrics_MaxPartCountForPartition{job="clickhouse"} > 300
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ClickHouse partition has {{ $value }} active parts (throws at parts_to_throw_insert=600)"
+        - alert: ClickHouseKafkaConsumerErrors
+          expr: rate(ClickHouseProfileEvents_KafkaConsumerErrors{job="clickhouse"}[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse Kafka engine consumer errors
+        - alert: ClickHouseKafkaCommitFailures
+          expr: rate(ClickHouseProfileEvents_KafkaCommitFailures{job="clickhouse"}[5m]) + rate(ClickHouseProfileEvents_KafkaRebalanceErrors{job="clickhouse"}[5m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse Kafka engine commit/rebalance errors (duplicates or stalled ingestion)
+        # 5 Kafka engine tables (one per clickhouse-* consumer group) are expected.
+        - alert: ClickHouseKafkaConsumersMissing
+          expr: ClickHouseMetrics_KafkaConsumers{job="clickhouse"} < 5
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse runs {{ $value }} Kafka consumers (expected 5)
+            description: A Kafka engine stream is detached or failing; see system.kafka_consumers.
+        - alert: ClickHouseTooManyPartsErrors
+          expr: increase(ClickHouseErrorMetric_TOO_MANY_PARTS{job="clickhouse"}[10m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: ClickHouse raised TOO_MANY_PARTS {{ $value | humanize }} times in 10 minutes
+        - alert: ClickHouseMemoryPressure
+          expr: ClickHouseAsyncMetrics_CGroupMemoryUsed{job="clickhouse"} / ClickHouseAsyncMetrics_CGroupMemoryTotal{job="clickhouse"} > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse uses {{ $value | humanizePercentage }} of its cgroup memory
+        - alert: ClickHouseMemoryLimitExceeded
+          expr: increase(ClickHouseErrorMetric_MEMORY_LIMIT_EXCEEDED{job="clickhouse"}[10m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse queries/merges hit the memory limit ({{ $value | humanize }} in 10 minutes)
+        - alert: ClickHouseKafkaRowsRejected
+          expr: rate(ClickHouseProfileEvents_KafkaRowsRejected{job="clickhouse"}[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse skips unparsable Kafka messages ({{ $value | humanize }}/s)
+        # Replicated tables only (0 on the single-node setup).
+        - alert: ClickHouseReplicationDelay
+          expr: ClickHouseAsyncMetrics_ReplicasMaxAbsoluteDelay{job="clickhouse"} > 300
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse replica is {{ $value | humanizeDuration }} behind
+        - alert: ClickHouseReadonlyReplica
+          expr: ClickHouseMetrics_ReadonlyReplica{job="clickhouse"} > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: ClickHouse replicated table is read-only (Keeper session lost)
+        # Hot tier = disk "default" (PVC on local-path, i.e. the host filesystem).
+        - alert: ClickHouseLocalDiskUsageHigh
+          expr: |
+            1 - ClickHouseAsyncMetrics_DiskAvailable{job="clickhouse",disk="default"} / ClickHouseAsyncMetrics_DiskTotal{job="clickhouse",disk="default"} > 0.90
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse local disk {{ $value | humanizePercentage }} used
+            description: The tiered policy moves parts to S3 when less than 10% is free (move_factor 0.1).
+        - alert: ClickHouseLocalDiskAlmostFull
+          expr: |
+            1 - ClickHouseAsyncMetrics_DiskAvailable{job="clickhouse",disk="default"} / ClickHouseAsyncMetrics_DiskTotal{job="clickhouse",disk="default"} > 0.95
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: ClickHouse local disk {{ $value | humanizePercentage }} used
+        # Cold tier on SeaweedFS (S3).
+        - alert: ClickHouseS3Errors
+          expr: |
+            (sum(rate({__name__=~"ClickHouseProfileEvents_(DiskS3WriteRequestsErrors|DiskS3ReadRequestsErrors|S3WriteRequestsErrors)",job="clickhouse"}[5m])) or vector(0))
+              + (sum(rate(ClickHouseErrorMetric_S3_ERROR{job="clickhouse"}[5m])) or vector(0)) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ClickHouse S3 (cold tier) request errors
+            description: Moves to / reads from SeaweedFS fail ({{ $value | humanize }}/s).
+        - alert: SeaweedFSDiskUsageHigh
+          expr: |
+            1 - min by (namespace, name) (SeaweedFS_volumeServer_resource{job="seaweedfs",type="avail"} / SeaweedFS_volumeServer_resource{job="seaweedfs",type="all"}) > 0.85
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "SeaweedFS disk {{ $labels.name }} {{ $value | humanizePercentage }} used (cold tier S3)"
+        - alert: SeaweedFSReadOnlyVolumes
+          expr: sum by (namespace) (SeaweedFS_volumeServer_read_only_volumes{job="seaweedfs"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: SeaweedFS has {{ $value }} read-only volumes (disk full or errors)
+        - alert: SeaweedFSDiskErrors
+          expr: max by (namespace, name) (SeaweedFS_volumeServer_disk_error_status{job="seaweedfs"}) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "SeaweedFS disk {{ $labels.name }} reports errors"
+        - alert: SeaweedFSS3ServerErrors
+          expr: |
+            sum(rate(SeaweedFS_s3_request_total{job="seaweedfs",code=~"5.."}[5m])) / sum(rate(SeaweedFS_s3_request_total{job="seaweedfs"}[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: SeaweedFS S3 answers {{ $value | humanizePercentage }} 5xx
+
+    # ======================================================================================================
+    - name: iot-pipeline
+      interval: 15s
+      rules:
+        - alert: TelemetryProcessorRejectedRatioHigh
+          expr: |
+            sum(rate(telemetry_processor_rejected_total{job="telemetry-processor"}[5m]))
+              / sum(rate(telemetry_processor_consumed_total{job="telemetry-processor"}[5m])) > 0.05
+            and sum(rate(telemetry_processor_consumed_total{job="telemetry-processor"}[5m])) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: telemetry-processor rejects {{ $value | humanizePercentage }} of envelopes
+            description: See the rejection reasons in the "IoT pipeline overview" dashboard (topic iot.detections.rejected).
+        - alert: TelemetryProcessorRejectionsByReason
+          expr: sum by (reason) (rate(telemetry_processor_rejected_total{job="telemetry-processor",reason=~"identity_mismatch|unsupported_schema"}[5m])) > 0.1
+          for: 15m
+          labels:
+            severity: info
+          annotations:
+            summary: "telemetry-processor: {{ $labels.reason }} rejections ({{ $value | humanize }}/s)"
+        - alert: TelemetryProcessorNotReady
+          expr: telemetry_processor_ready{job="telemetry-processor"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "telemetry-processor {{ $labels.pod }} not ready (not in the consumer group or producer unhealthy)"
+        - alert: TelemetryProcessorDeliveryFailures
+          expr: increase(telemetry_processor_delivery_failures_total{job="telemetry-processor"}[10m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "telemetry-processor {{ $labels.pod }}: Kafka did not acknowledge records"
+        - alert: ConsensusNotReady
+          expr: consensus_ready{job="consensus"} == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "consensus {{ $labels.pod }} not ready (no partitions assigned or geometry not loaded)"
+        - alert: ConsensusProduceErrors
+          expr: rate(consensus_kafka_produce_errors_total{job="consensus"}[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "consensus {{ $labels.pod }}: produce errors ({{ $value | humanize }}/s)"
+        - alert: PipelineWorkloadUnavailable
+          expr: |
+            kube_deployment_status_replicas_available{namespace="iot-pipeline",deployment=~"telemetry-processor|consensus"} < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.deployment }} has no available pod"
+        - alert: PipelineEventAgeHigh
+          expr: |
+            histogram_quantile(0.95, sum by (le) (rate(telemetry_processor_event_age_seconds_bucket{job="telemetry-processor"}[5m]))) > 10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Detections reach telemetry-processor {{ $value | humanizeDuration }} after the sensor timestamp (p95)
+        - alert: KEDAScalerErrors
+          expr: sum by (namespace, scaledObject, scaler) (rate(keda_scaler_detail_errors_total{job="keda-operator"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "KEDA scaler {{ $labels.scaler }} of {{ $labels.namespace }}/{{ $labels.scaledObject }} fails"
+            description: Autoscaling on Kafka lag is blind (authentication, TLS or broker problems).
+        - alert: KEDAScaledObjectErrors
+          expr: sum by (namespace, scaledObject) (rate(keda_scaled_object_errors_total{job="keda-operator"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "KEDA ScaledObject {{ $labels.namespace }}/{{ $labels.scaledObject }} reports errors"
+        - alert: KEDAAtMaxReplicas
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=~"keda-hpa-.+"}
+              >= kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=~"keda-hpa-.+"}
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.horizontalpodautoscaler }} runs at max replicas for 30 minutes"
+
+    # Simulator (make sim-up): runs on the host, usually absent. These fire only while it is running and
+    # are informational — a load generator falling behind is not a platform fault.
+    - name: iot-simulator
+      interval: 15s
+      rules:
+        - alert: SimulatorDroppingMessages
+          expr: |
+            sum(rate(tunnel_sim_dropped_total{job="simulator"}[2m])) > 0
+            or sum(rate(tunnel_sim_missed_total{job="simulator"}[2m])) > 0
+          for: 2m
+          labels:
+            severity: info
+          annotations:
+            summary: Simulator drops or misses messages ({{ $value | humanize }}/s)
+            description: The generator cannot keep up (host CPU) or the broker refuses publishes — sent/received panels diverge.
+        - alert: SimulatorSchedulerLagging
+          expr: max(tunnel_sim_max_lag_seconds{job="simulator"}) > 5
+          for: 2m
+          labels:
+            severity: info
+          annotations:
+            summary: Simulator scheduler is {{ $value | humanizeDuration }} behind
+        - alert: SimulatorClientsDisconnected
+          expr: |
+            max(tunnel_sim_workers_disconnected{job="simulator"}) > 0
+            or (max(tunnel_sim_clients{job="simulator"}) - max(tunnel_sim_clients_connected{job="simulator"})) > 0
+          for: 5m
+          labels:
+            severity: info
+          annotations:
+            summary: Simulator MQTT clients are not all connected ({{ $value }})
+        # End-to-end gap: what the simulator published vs what telemetry-processor consumed.
+        - alert: SimulatorToPipelineGap
+          expr: |
+            (sum(rate(tunnel_sim_published_total{job="simulator"}[5m])) - sum(rate(telemetry_processor_consumed_total{job="telemetry-processor"}[5m])))
+              / sum(rate(tunnel_sim_published_total{job="simulator"}[5m])) > 0.05
+            and sum(rate(tunnel_sim_published_total{job="simulator"}[5m])) > 10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value | humanizePercentage }} of the published MQTT messages do not reach telemetry-processor"
+            description: Loss between simulator, TBMQ, the integration executor and the app Kafka; compare the "sent vs received" panel.
+
+    # ======================================================================================================
+    - name: iot-platform-health
+      interval: 30s
+      rules:
+        - alert: IoTTargetDown
+          expr: |
+            up{job=~"tbmq|tbmq-integration-executor|kafka|kafka-exporter|cnpg|valkey|clickhouse|seaweedfs|keda-operator|telemetry-processor|consensus|otel-collector|vector|cilium-agent|hubble|envoy-gateway|envoy-proxy|cert-manager|strimzi-cluster-operator"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Scrape target down: {{ $labels.job }} {{ $labels.namespace }}/{{ $labels.pod }}"
+            description: The component is down or its metrics endpoint is not reachable (NetworkPolicy, port name, disabled metrics).
+        # Targets that never appeared: a metrics patch was not applied (Kafka metricsConfig/kafkaExporter,
+        # Valkey exporter sidecar, KEDA prometheus.operator.enabled, Cilium prometheus.enabled).
+        - alert: IoTMetricsMissing
+          expr: |
+            absent(up{job="kafka",namespace="thingsboard-mqtt-broker"})
+            or absent(up{job="kafka",namespace="iot-pipeline"})
+            or absent(up{job="kafka-exporter",namespace="thingsboard-mqtt-broker"})
+            or absent(up{job="kafka-exporter",namespace="iot-pipeline"})
+            or absent(up{job="tbmq"})
+            or absent(up{job="cnpg"})
+            or absent(up{job="valkey"})
+            or absent(up{job="keda-operator"})
+            or absent(up{job="cilium-agent"})
+          for: 30m
+          labels:
+            severity: info
+          annotations:
+            summary: "No scrape target for {{ $labels.job }} {{ $labels.namespace }}"
+        - alert: ContainerMemoryNearLimit
+          expr: |
+            max by (namespace, pod, container) (container_memory_working_set_bytes{namespace=~"thingsboard-mqtt-broker|iot-pipeline|iot-storage|monitoring|keda",container!="",container!="POD"})
+              / max by (namespace, pod, container) (kube_pod_container_resource_limits{resource="memory"} > 0) > 0.9
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} {{ $labels.container }} at {{ $value | humanizePercentage }} of its memory limit"
+        - alert: ContainerOOMKilled
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace=~"thingsboard-mqtt-broker|iot-pipeline|iot-storage|monitoring|keda|kube-system"}[15m]) > 0
+            and on (namespace, pod, container) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} {{ $labels.container }} was OOM-killed"
+        - alert: StrimziReconciliationFailing
+          expr: sum by (kind, namespace) (increase(strimzi_reconciliations_failed_total{job="strimzi-cluster-operator"}[15m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Strimzi fails to reconcile {{ $labels.kind }} in {{ $labels.namespace }}"
+        - alert: StrimziCertificateExpiring
+          expr: strimzi_certificate_expiration_timestamp_ms{job="strimzi-cluster-operator"} / 1000 - time() < 14 * 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: Strimzi certificate expires in {{ $value | humanizeDuration }}
+        - alert: CertManagerCertificateNotReady
+          expr: max by (namespace, name) (certmanager_certificate_ready_status{job="cert-manager",condition=~"False|Unknown"}) == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificate {{ $labels.namespace }}/{{ $labels.name }} not ready"
+        - alert: CertManagerCertificateExpiring
+          expr: (min by (namespace, name) (certmanager_certificate_expiration_timestamp_seconds{job="cert-manager"}) - time()) < 7 * 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificate {{ $labels.namespace }}/{{ $labels.name }} expires in {{ $value | humanizeDuration }} (renewal failed?)"
+        - alert: CiliumPolicyDrops
+          expr: sum by (direction) (rate(cilium_drop_count_total{job="cilium-agent",reason="Policy denied"}[5m])) > 0.1
+          for: 10m
+          labels:
+            severity: info
+          annotations:
+            summary: "Cilium drops {{ $value | humanize }} packets/s ({{ $labels.direction }}) by NetworkPolicy"
+            description: "Check with: hubble observe --verdict DROPPED (e.g. a client missing from Strimzi networkPolicyPeers)."
+        - alert: EnvoyGatewayUpstream5xx
+          expr: |
+            sum(rate(envoy_cluster_upstream_rq_xx{job="envoy-proxy",envoy_response_code_class="5"}[5m]))
+              / sum(rate(envoy_cluster_upstream_rq_xx{job="envoy-proxy"}[5m])) > 0.05
+            and sum(rate(envoy_cluster_upstream_rq_xx{job="envoy-proxy"}[5m])) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Envoy Gateway returns {{ $value | humanizePercentage }} 5xx from upstreams (TBMQ UI/REST)
+        # Collector 0.160 self-metrics have no _total suffix (verified); the regex accepts both conventions.
+        - alert: OtelCollectorExportFailures
+          expr: |
+            sum by (exporter) (rate({__name__=~"otelcol_exporter_send_failed_(spans|metric_points|log_records)(_total)?",job="otel-collector"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OTel collector exporter {{ $labels.exporter }} fails to send"
+        - alert: OtelCollectorRefusingData
+          expr: |
+            sum by (receiver) (rate({__name__=~"otelcol_receiver_refused_(spans|metric_points|log_records)(_total)?",job="otel-collector"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: OTel collector refuses telemetry (memory_limiter or backpressure)
+        - alert: VectorLogsDropped
+          expr: sum by (pod) (rate({__name__=~"vector_(buffer|component)_discarded_events_total",job="vector"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Vector {{ $labels.pod }} drops {{ $value | humanize }} log events/s (VictoriaLogs slow or down)"

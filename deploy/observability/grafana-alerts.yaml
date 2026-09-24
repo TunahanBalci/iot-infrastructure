@@ -1,0 +1,107 @@
+# Grafana alert rules over ClickHouse (sidecar label grafana_alert=1 -> provisioning/alerting).
+#
+# Metric alerts live in alerts.yaml (vmalert + Alertmanager). These two cannot be expressed on
+# metrics: whether a vehicle broke a rule is a question about the stored vehicle events joined to
+# the tunnel's own profile and rules (iot.speeding_alerts / iot.restricted_alerts, rendered from
+# apps/simulator/config/tunnels.yaml by scripts/install/85-storage.sh).
+#
+# Both rules count today's alerts (local Istanbul day, the same boundary the tunnel rules use) and
+# fire when that count grows. The detail — plate, vehicle type, tunnel, time, speed — is on the
+# "Tunnel operations" dashboard, named in each rule's description.
+#
+# No __dashboardUid__/__panelId__ annotations: Grafana rejects the whole file unless both are given
+# ("both annotations __dashboardUid__ and __panelId__ must be specified"), and a panel id would tie
+# these rules to the generated panel numbering of tunnel-operations.json.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-alerts-iot
+  namespace: monitoring
+  labels:
+    grafana_alert: "1"
+    app.kubernetes.io/part-of: iot-infrastructure
+data:
+  iot-tunnel-alerts.yaml: |
+    apiVersion: 1
+    groups:
+      - orgId: 1
+        name: tunnel-alerts
+        folder: IoT
+        interval: 1m
+        rules:
+          - uid: iot-speeding-today
+            title: Vehicle over the tunnel speed limit
+            condition: threshold
+            for: 0m
+            labels:
+              severity: warning
+              source: clickhouse
+            annotations:
+              summary: "{{ $values.alerts.Value }} vehicle(s) over the speed limit today"
+              description: >-
+                A vehicle was detected above the posted limit of its tunnel. Plate, type, tunnel,
+                time and speed: Grafana dashboard "Tunnel operations" (today's alerts), or
+                SELECT * FROM iot.speeding_alerts WHERE local_day = toDate(now(), 'Europe/Istanbul').
+            isPaused: false
+            noDataState: OK
+            execErrState: Error
+            data:
+              - refId: alerts
+                relativeTimeRange: {from: 86400, to: 0}
+                datasourceUid: ClickHouse
+                model:
+                  refId: alerts
+                  editorType: sql
+                  format: 1
+                  queryType: table
+                  rawSql: >-
+                    SELECT count() AS value FROM iot.speeding_alerts
+                    WHERE local_day = toDate(now(), 'Europe/Istanbul')
+              - refId: threshold
+                relativeTimeRange: {from: 86400, to: 0}
+                datasourceUid: __expr__
+                model:
+                  refId: threshold
+                  type: threshold
+                  expression: alerts
+                  conditions:
+                    - evaluator: {type: gt, params: [0]}
+
+          - uid: iot-restricted-today
+            title: Restricted vehicle in a tunnel
+            condition: threshold
+            for: 0m
+            labels:
+              severity: critical
+              source: clickhouse
+            annotations:
+              summary: "{{ $values.alerts.Value }} restricted vehicle(s) detected today"
+              description: >-
+                A vehicle type that is not allowed in that tunnel at that hour was detected.
+                Plate, type, tunnel, time and the banned window: Grafana dashboard
+                "Tunnel operations", or SELECT * FROM iot.restricted_alerts
+                WHERE local_day = toDate(now(), 'Europe/Istanbul').
+            isPaused: false
+            noDataState: OK
+            execErrState: Error
+            data:
+              - refId: alerts
+                relativeTimeRange: {from: 86400, to: 0}
+                datasourceUid: ClickHouse
+                model:
+                  refId: alerts
+                  editorType: sql
+                  format: 1
+                  queryType: table
+                  rawSql: >-
+                    SELECT count() AS value FROM iot.restricted_alerts
+                    WHERE local_day = toDate(now(), 'Europe/Istanbul')
+              - refId: threshold
+                relativeTimeRange: {from: 86400, to: 0}
+                datasourceUid: __expr__
+                model:
+                  refId: threshold
+                  type: threshold
+                  expression: alerts
+                  conditions:
+                    - evaluator: {type: gt, params: [0]}

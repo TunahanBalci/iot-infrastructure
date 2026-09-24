@@ -1,0 +1,451 @@
+# victoria-metrics-k8s-stack (chart 0.92.1, VictoriaMetrics v1.151.0, operator v0.74.1), lean single-node profile.
+# Installed by scripts/install/90-observability.sh as release "vm" in namespace monitoring; retention and
+# PVC size are passed with --set (OBS_METRICS_RETENTION, OBS_METRICS_STORAGE).
+#
+# In-cluster addresses (fullnameOverride vm):
+#   VMSingle      http://vmsingle-vm.monitoring.svc:8428   (Prometheus API /api/v1/query — KEDA prometheus trigger
+#                                                          serverAddress; OTLP /opentelemetry/v1/metrics)
+#   vmagent       http://vmagent-vm.monitoring.svc:8429
+#   vmalert       http://vmalert-vm.monitoring.svc:8080
+#   Alertmanager  http://vmalertmanager-vm.monitoring.svc:9093  (UI only, no receivers)
+#   Grafana       http://vm-grafana.monitoring.svc:80
+fullnameOverride: vm
+
+victoria-metrics-operator:
+  enabled: true
+  crds:
+    plain: true           # CRDs applied server-side by the install step (helm never upgrades crds/)
+    cleanup:
+      enabled: false      # uninstall keeps VM CRs/CRDs (no kubectl hook job)
+  serviceMonitor:
+    enabled: true         # VMServiceScrape for the operator itself
+  admissionWebhooks:
+    policy: Ignore
+  operator:
+    disable_prometheus_converter: true   # no prometheus-operator CRDs here: skip the extra watches
+  resources:
+    requests:
+      cpu: 20m
+      memory: 48Mi
+    limits:
+      memory: 96Mi
+  env:
+    # config-reloader sidecars of vmagent/vmalert/alertmanager: unlimited by default
+    - name: VM_CONFIG_RELOADER_REQUEST_CPU
+      value: 5m
+    - name: VM_CONFIG_RELOADER_REQUEST_MEMORY
+      value: 12Mi
+    - name: VM_CONFIG_RELOADER_LIMIT_MEMORY
+      value: 20Mi
+
+# --- dashboards and rules fetched at install time by the sync-job (post-install/upgrade hook) --------
+# Essentials only for a single-node k3s: node, pods/workloads, PVCs, kubelet, VictoriaMetrics itself.
+syncJob:
+  enabled: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+defaultDashboards:
+  enabled: true
+  dashboards:
+    node-exporter-full:
+      enabled: false
+    victoriametrics-operator:
+      enabled: false
+    victoriametrics-vmalert:
+      enabled: true
+    grafana-overview:
+      enabled: false
+    # kube-prometheus bundle: drop control-plane, Windows/AIX/Darwin, Prometheus and network-only views
+    apiserver:
+      enabled: false
+    controller-manager:
+      enabled: false
+    scheduler:
+      enabled: false
+    proxy:
+      enabled: false
+    prometheus:
+      enabled: false
+    prometheus-remote-write:
+      enabled: false
+    k8s-resources-multicluster:
+      enabled: false
+    k8s-resources-windows-cluster:
+      enabled: false
+    k8s-resources-windows-namespace:
+      enabled: false
+    k8s-resources-windows-pod:
+      enabled: false
+    k8s-windows-cluster-rsrc-use:
+      enabled: false
+    k8s-windows-node-rsrc-use:
+      enabled: false
+    nodes-aix:
+      enabled: false
+    nodes-darwin:
+      enabled: false
+    node-cluster-rsrc-use:
+      enabled: false
+    namespace-by-pod:
+      enabled: false
+    namespace-by-workload:
+      enabled: false
+    pod-total:
+      enabled: false
+    workload-total:
+      enabled: false
+    cluster-total:
+      enabled: false
+
+defaultRules:
+  enabled: true
+  rules:
+    # The simulator (make sim-up) is a load generator on the host and is normally not running:
+    # its target must not make the upstream TargetDown alert fire. Per-rule spec overrides replace
+    # the upstream expression (sync-job mergeRule).
+    TargetDown:
+      spec:
+        expr: 100 * (count(up{job!="simulator"} == 0) BY (cluster, job, namespace, service) / count(up{job!="simulator"}) BY (cluster, job, namespace, service)) > 10
+  groups:
+    # k3s embeds the control plane in one process: no scheduler/controller-manager/etcd targets
+    kubernetes-system-scheduler:
+      enabled: false
+    kubernetes-system-controller-manager:
+      enabled: false
+    kube-scheduler.rules:
+      enabled: false
+    # Wi-Fi laptop: interface flaps are expected
+    node-network:
+      enabled: false
+
+# --- storage: VMSingle ---------------------------------------------------------------------------
+vmsingle:
+  enabled: true
+  spec:
+    retentionPeriod: "7d"
+    replicaCount: 1
+    extraArgs:
+      # OTLP metrics from the collector get Prometheus-style names (dots -> underscores, unit/_total suffixes)
+      opentelemetry.usePrometheusNaming: "true"
+      # Samples become queryable 5s after collection instead of the 30s default: live Grafana panels.
+      # (Lower values can show a partially ingested last data point; 5s > vmagent's 1s flush interval.)
+      search.latencyOffset: 5s
+    resources:
+      requests:
+        cpu: 100m
+        memory: 160Mi
+      limits:
+        memory: 768Mi          # 10s scrapes on the live jobs: ~3x the samples/s of the 30s default,
+                               # and it sat at 100% of 512Mi with 7d of retention
+    storage:
+      storageClassName: local-path
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 5Gi
+
+# --- scraping: vmagent ------------------------------------------------------------------------------
+vmagent:
+  enabled: true
+  spec:
+    selectAllByDefault: true          # VMServiceScrape/VMPodScrape/VMStaticScrape/VMNodeScrape in any namespace
+    scrapeInterval: 30s
+    extraArgs:
+      promscrape.streamParse: "true"
+      promscrape.maxScrapeSize: 32MiB
+      remoteWrite.maxDiskUsagePerURL: 256MiB
+      # Ship every scrape immediately (default 1s) — the 10s jobs must not wait for a batch.
+      remoteWrite.flushInterval: 1s
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        # vmagent sizes its caches from the limit (-memory.allowedPercent=60) and keeps the remote-write
+        # queue in memory: 160Mi was OOMKilled within a minute of start, 320Mi ran at 89%.
+        memory: 512Mi
+
+# --- alerting: vmalert + Alertmanager (UI only) ---------------------------------------------------
+vmalert:
+  enabled: true
+  spec:
+    selectAllByDefault: true          # VMRule in any namespace
+    # Our own groups carry their own interval (15s for MQTT/Kafka/pipeline, see alerts.yaml); this is
+    # the default for the chart's upstream Kubernetes rules, which do not need to run that often.
+    evaluationInterval: 30s
+    extraArgs:
+      http.pathPrefix: /
+      external.url: http://localhost:3000   # Grafana via kubectl port-forward: alert "source" links
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 128Mi         # the chart's Kubernetes rule set at 40Mi was OOMKilled every few minutes
+
+alertmanager:
+  enabled: true
+  monzoTemplate:
+    enabled: false
+  spec:
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 5m
+        memory: 32Mi
+      limits:
+        memory: 64Mi          # 32Mi ran at 96%
+  config:
+    route:
+      receiver: blackhole
+      group_by: ["alertname", "namespace"]
+      group_wait: 15s
+      group_interval: 5m
+      repeat_interval: 12h
+      routes:
+        - matchers: ['alertname=~"Watchdog|InfoInhibitor"']
+          receiver: blackhole
+    inhibit_rules:
+      - source_matchers: ['severity="critical"']
+        target_matchers: ['severity=~"warning|info"']
+        equal: ["namespace", "alertname"]
+    receivers:
+      - name: blackhole
+
+# --- Grafana datasources (sidecar ConfigMap vm-grafana-ds) ----------------------------------------
+# UIDs are referenced by deploy/observability/dashboards/*.json.
+defaultDatasources:
+  victoriametrics:
+    datasources:
+      - name: VictoriaMetrics
+        type: prometheus
+        access: proxy
+        uid: VictoriaMetrics
+        isDefault: true
+        jsonData:
+          prometheusType: Prometheus
+          # = fastest scrape interval: drives $__interval / $__rate_interval (>= 40s rate windows)
+          timeInterval: 10s
+  victorialogs:
+    datasources: []
+  victoriatraces:
+    datasources: []
+  alertmanager:
+    datasources:
+      - name: Alertmanager
+        access: proxy
+        uid: Alertmanager
+        jsonData:
+          implementation: prometheus
+  extra:
+    - name: VictoriaLogs
+      type: victoriametrics-logs-datasource
+      plugin: true
+      uid: VictoriaLogs
+      access: proxy
+      url: http://vlogs-server.monitoring.svc:9428
+    - name: VictoriaTraces
+      type: jaeger
+      uid: VictoriaTraces
+      access: proxy
+      url: http://vtraces-server.monitoring.svc:10428/select/jaeger
+    - name: ClickHouse
+      type: grafana-clickhouse-datasource
+      plugin: true
+      uid: ClickHouse
+      jsonData:
+        host: clickhouse.iot-storage.svc
+        port: 8123
+        protocol: http
+        secure: false
+        username: grafana
+        defaultDatabase: iot
+      secureJsonData:
+        # Secret iot-storage/clickhouse-grafana, copied into monitoring by the install step
+        password: $__env{CLICKHOUSE_GRAFANA_PASSWORD}
+
+grafana:
+  enabled: true
+  testFramework:
+    enabled: false
+  admin:
+    existingSecret: grafana-admin      # created by the install step from .state/grafana-admin-password
+    userKey: admin-user
+    passwordKey: admin-password
+  plugins:
+    - victoriametrics-logs-datasource@0.32.0
+    - grafana-clickhouse-datasource@4.21.3
+  envValueFrom:
+    CLICKHOUSE_GRAFANA_PASSWORD:
+      secretKeyRef:
+        name: clickhouse-grafana
+        key: password
+        optional: true                 # Grafana still starts when STORAGE_ENABLED=false
+  persistence:
+    enabled: false                     # everything is provisioned; plugins re-download on restart
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      # Steady state is ~270Mi, but startup (plugin install, ~700 DB migrations, provisioning every
+      # dashboard) spikes well past it: 512Mi was OOMKilled, 768Mi peaked at 94%.
+      memory: 1Gi
+  grafana.ini:
+    analytics:
+      check_for_updates: false
+      check_for_plugin_updates: false
+      reporting_enabled: false
+      feedback_links_enabled: false
+    news:
+      news_feed_enabled: false
+    users:
+      allow_sign_up: false
+    auth.anonymous:
+      enabled: false
+    unified_alerting:
+      # Metric alerts are vmalert + Alertmanager. Grafana's own alerting is on for the rules that
+      # cannot be expressed on metrics: the tunnel alerts are SQL over ClickHouse (a vehicle over
+      # the speed limit, a restricted vehicle in a banned hour), provisioned as the ConfigMap
+      # grafana-alerts-iot (deploy/observability/grafana-alerts.yaml).
+      enabled: true
+    dashboards:
+      # The dashboards sidecar writes under the provider's own folder (sidecar.dashboards.folder +
+      # provider defaultFolderName), so the path carries /default/ before the grafana_folder name.
+      default_home_dashboard_path: /var/lib/grafana/dashboards/default/IoT/iot-pipeline-overview.json
+      min_refresh_interval: 5s         # live watching: users can pick 5s in the refresh picker
+  sidecar:
+    resources:
+      requests:
+        cpu: 5m
+        memory: 48Mi
+      limits:
+        memory: 128Mi                  # k8s-sidecar is Python: 64Mi was killed before it logged a line
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
+      initDatasources: true            # init container only (no watcher): the install step rolls Grafana on changes
+      # The chart passes watchMethod to the init container too, and its default (WATCH) never returns:
+      # Grafana would stay in Init forever. LIST writes the datasource files once and exits.
+      watchMethod: LIST
+      skipReload: true                 # Grafana is not listening yet while its init containers run
+    alerts:
+      enabled: true
+      label: grafana_alert
+      labelValue: "1"
+      searchNamespace: monitoring
+      folder: /etc/grafana/provisioning/alerting
+      reloadURL: "http://vm-grafana.monitoring.svc/api/admin/provisioning/alerting/reload"
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      folder: /var/lib/grafana/dashboards
+      defaultFolderName: default
+      folderAnnotation: grafana_folder
+      provider:
+        name: default
+        orgid: 1
+        foldersFromFilesStructure: true
+        allowUiUpdates: false
+  vmScrape:
+    enabled: true
+
+# --- Kubernetes metrics ----------------------------------------------------------------------------
+kube-state-metrics:
+  enabled: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 24Mi
+    limits:
+      memory: 40Mi
+  # Only the object kinds the default dashboards/rules use.
+  collectors:
+    - cronjobs
+    - daemonsets
+    - deployments
+    - horizontalpodautoscalers
+    - jobs
+    - namespaces
+    - nodes
+    - persistentvolumeclaims
+    - persistentvolumes
+    - pods
+    - replicasets
+    - services
+    - statefulsets
+
+prometheus-node-exporter:
+  enabled: true
+  service:
+    # hostNetwork: 9100 is taken on this host (GitLab's node_exporter on 127.0.0.1:9100)
+    port: 9110
+    targetPort: 9110
+    # Bind to the node InternalIP (K3S_NODE_IP, host-local dummy interface), not to the Wi-Fi address.
+    listenOnAllInterfaces: false
+    labels:
+      jobLabel: node-exporter
+  resources:
+    requests:
+      cpu: 10m
+      memory: 12Mi
+    limits:
+      memory: 24Mi
+  extraArgs:
+    - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/k3s/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+|var/lib/rancher/k3s/agent/containerd/.+)($|/)
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|erofs|sysfs|tracefs|tmpfs)$
+    - --no-collector.wifi
+    - --no-collector.hwmon
+
+kubelet:
+  enabled: true
+  vmScrapes:
+    probes:
+      enabled: false
+    resources:
+      enabled: true
+    cadvisor:
+      enabled: true
+  vmScrape:
+    spec:
+      interval: 30s
+      metricRelabelConfigs:
+        - action: labeldrop
+          regex: (uid)
+        - action: labeldrop
+          regex: (id|name)
+        - action: drop
+          source_labels: [__name__]
+          regex: (rest_client_request_duration_seconds_bucket|rest_client_request_duration_seconds_sum|rest_client_request_duration_seconds_count)
+        # cAdvisor series nobody queries on this setup (per-CPU, filesystem inode/io detail, tasks)
+        - action: drop
+          source_labels: [__name__]
+          regex: container_(blkio_device_usage_total|tasks_state|memory_failures_total|fs_(inodes_free|inodes_total|io_current|io_time_seconds_total|io_time_weighted_seconds_total|read_seconds_total|reads_merged_total|sector_reads_total|sector_writes_total|write_seconds_total|writes_merged_total)|cpu_load_average_10s|last_seen|spec_.*|file_descriptors|sockets|threads|threads_max|ulimits_soft|processes|start_time_seconds)
+        - action: drop
+          source_labels: [__name__]
+          regex: (kubelet_runtime_operations_duration_seconds_bucket|storage_operation_duration_seconds_bucket|csi_operations_seconds_bucket|kubelet_http_requests_duration_seconds_bucket|apiserver_.*)
+
+# k3s: control plane runs inside the k3s process, there are no pods to scrape. The API server
+# metrics are high-cardinality and not needed on a laptop.
+kubeApiServer:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeDns:
+  enabled: false
+coreDns:
+  enabled: true

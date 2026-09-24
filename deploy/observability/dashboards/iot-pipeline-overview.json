@@ -1,0 +1,2551 @@
+{
+  "uid": "iot-pipeline-overview",
+  "title": "IoT pipeline overview",
+  "tags": [
+    "iot",
+    "pipeline"
+  ],
+  "description": "MQTT ingress -> TBMQ -> integration executor -> app Kafka -> telemetry-processor -> consensus -> ClickHouse.",
+  "editable": false,
+  "graphTooltip": 1,
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "refresh": "10s",
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "1h"
+    ],
+    "time_options": [
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "3h",
+      "6h",
+      "12h",
+      "24h",
+      "7d",
+      "30d"
+    ]
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "type": "dashboards",
+      "tags": [
+        "iot"
+      ],
+      "asDropdown": true,
+      "title": "IoT dashboards",
+      "includeVars": false,
+      "keepTime": true
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Live",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Data path freshness",
+      "description": "Age of the newest row in iot.detections: sensor -> TBMQ -> Kafka -> ClickHouse. Measured on insert time, so it stays honest when a sensor clock drifts.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT if(count() = 0, NULL, dateDiff('second', max(inserted_at), now())) AS seconds_behind\nFROM iot.detections\nWHERE inserted_at >= now() - INTERVAL 10 MINUTE",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 15
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "nothing stored in the last 10 min",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 2,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Ingest latency p95 (5 min)",
+      "description": "TBMQ receive time -> ClickHouse insert (iot.detections.ingest_latency_ms).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT quantile(0.95)(ingest_latency_ms) / 1000 AS p95_seconds\nFROM iot.detections\nWHERE ts >= now() - INTERVAL 5 MINUTE",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 3,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Detections stored (5 min)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT count() AS rows\nFROM iot.detections\nWHERE ts >= now() - INTERVAL 5 MINUTE",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 4,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Simulator published/s",
+      "description": "Only while the simulator runs (make sim-up); it lives on the host, outside the cluster.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_published_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 5,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Simulator dropped/s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_dropped_total{job=\"simulator\"}[$__rate_interval])) + sum(rate(tunnel_sim_missed_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 6,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Simulator scheduler lag",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max(tunnel_sim_max_lag_seconds{job=\"simulator\"})",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 7,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Sent vs received (msg/s through the whole path)",
+      "description": "Every stage of the pipeline; a gap between two lines is where messages are lost or queued.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_published_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "1 simulator published",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval]))",
+          "legendFormat": "2 TBMQ incoming",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(integration_stats_counter_total{job=\"tbmq-integration-executor\",name=\"msgUplink\",state=\"success\"}[$__rate_interval]))",
+          "legendFormat": "3 IE uplink",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_consumed_total[$__rate_interval]))",
+          "legendFormat": "4 processor consumed",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_produced_total[$__rate_interval]))",
+          "legendFormat": "5 processor produced",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_received_total[$__rate_interval]))",
+          "legendFormat": "6 consensus received",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_KafkaRowsRead{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "7 ClickHouse rows read",
+          "refId": "G"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Simulator: drops, lag and clients",
+      "description": "Rates, the scheduler's worst lag and the MQTT client count share one axis; the lag series is seconds. clients connected < clients configured means a device session dropped.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_dropped_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "dropped/s",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_missed_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "missed/s",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(tunnel_sim_duplicates_total{job=\"simulator\"}[$__rate_interval]))",
+          "legendFormat": "duplicates/s",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max(tunnel_sim_max_lag_seconds{job=\"simulator\"})",
+          "legendFormat": "max lag s",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(tunnel_sim_pending_messages{job=\"simulator\"})",
+          "legendFormat": "pending messages",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(tunnel_sim_clients_connected{job=\"simulator\"})",
+          "legendFormat": "clients connected",
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(tunnel_sim_clients{job=\"simulator\"})",
+          "legendFormat": "clients configured",
+          "refId": "G"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "max lag s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      }
+    },
+    {
+      "type": "table",
+      "title": "Last 20 vehicles (iot.vehicles, last 5 min)",
+      "description": "Fixed 5-minute window on ts_entry (partition key + minmax index) and LIMIT 20: cheap at a 10s refresh. Window is on device time, so a skewed sensor clock empties this.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT ts_exit AS time, tunnel_id, direction, lane, classification,\n  round(speed_kmh, 1) AS speed_kmh, round(length_m, 1) AS length_m, sensors, round(agreement, 2) AS agreement\nFROM iot.vehicles\nWHERE ts_entry >= now() - INTERVAL 5 MINUTE\nORDER BY ts_exit DESC\nLIMIT 20",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "transformations": [],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "No vehicles fused in the last 5 min - check the simulator, or consensus calibration per tunnel."
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      }
+    },
+    {
+      "type": "table",
+      "title": "Last 20 rejections (iot.detections_rejected, last 15 min)",
+      "description": "Empty is the healthy state: rows here are payloads telemetry-processor refused.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT processed_ts AS time, reason, tunnel_id, client_cert_cn, substring(detail, 1, 120) AS detail\nFROM iot.detections_rejected\nWHERE processed_ts >= now() - INTERVAL 15 MINUTE\nORDER BY processed_ts DESC\nLIMIT 20",
+          "format": 1,
+          "queryType": "table",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "transformations": [],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "No rejections in the last 15 min - every detection was accepted."
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      }
+    },
+    {
+      "type": "row",
+      "title": "Health",
+      "id": 12,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Firing alerts (warning/critical)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "count(ALERTS{alertstate=\"firing\",severity=~\"critical|warning\"}) or vector(0)",
+          "legendFormat": "__auto",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 13,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 24
+      }
+    },
+    {
+      "type": "stat",
+      "title": "MQTT connections",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(connectedSessions{job=\"tbmq\"})",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 14,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 24
+      }
+    },
+    {
+      "type": "stat",
+      "title": "MQTT publishes/s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(incomingPublishMsg_published_total{job=\"tbmq\",statsName=\"totalMsgs\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 15,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 24
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Detections produced/s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_produced_total[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 16,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 24
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Vehicles/s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_vehicles_total[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 17,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 24
+      }
+    },
+    {
+      "type": "stat",
+      "title": "ClickHouse rows inserted/s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_InsertedRows{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 18,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 24
+      }
+    },
+    {
+      "type": "row",
+      "title": "MQTT ingress (TBMQ)",
+      "id": 19,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "MQTT connections by broker pod",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (connectedSessions{job=\"tbmq\"})",
+          "legendFormat": "{{pod}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 20,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 29
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Connection events/s",
+      "description": "Reconnect storms show as accepted ~ disconnects well above zero.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(connectionAccepted_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "accepted",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(connectionRefused_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "refused",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(connectionError_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "error",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(clientDisconnects_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "disconnects",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 21,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 29
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Incoming publishes/s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (statsName) (rate(incomingPublishMsg_published_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "{{statsName}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(droppedMsgs_total{job=\"tbmq\"}[$__rate_interval]))",
+          "legendFormat": "dropped",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 22,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 29
+      }
+    },
+    {
+      "type": "row",
+      "title": "Integration executor -> app Kafka",
+      "id": 23,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "IE uplink messages/s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (state) (rate(integration_stats_counter_total{job=\"tbmq-integration-executor\",name=\"msgUplink\"}[$__rate_interval]))",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 24,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 38
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "IE lag (TBMQ internal Kafka)",
+      "description": "KEDA scales the integration executors on this lag.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (consumergroup) (clamp_min(kafka_consumergroup_lag{job=\"kafka-exporter\",namespace=\"thingsboard-mqtt-broker\",consumergroup=~\"ie-msg-consumer-group-.+\"}, 0))",
+          "legendFormat": "{{consumergroup}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 25,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 38
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "App Kafka messages in/s by topic",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (topic) (rate(kafka_server_brokertopicmetrics_messagesin_total{job=\"kafka\",namespace=\"iot-pipeline\",topic=~\"iot\\\\..+\"}[$__rate_interval]))",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 26,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 38
+      }
+    },
+    {
+      "type": "row",
+      "title": "Consumer lag and autoscaling",
+      "id": 27,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "App Kafka consumer lag",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (consumergroup, topic) (clamp_min(kafka_consumergroup_lag{job=\"kafka-exporter\",namespace=\"iot-pipeline\",consumergroup!=\"consensus\"}, 0))",
+          "legendFormat": "{{consumergroup}} / {{topic}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(consensus_kafka_lag_records)",
+          "legendFormat": "consensus / unread detections",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 28,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Replicas (KEDA)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "kube_deployment_status_replicas{namespace=\"iot-pipeline\",deployment=~\"telemetry-processor|consensus\"}",
+          "legendFormat": "{{deployment}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "kube_statefulset_status_replicas{namespace=\"thingsboard-mqtt-broker\",statefulset=\"tbmq-integration-executor\"}",
+          "legendFormat": "{{statefulset}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=~\"keda-hpa-.+\"}",
+          "legendFormat": "max {{horizontalpodautoscaler}}",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 29,
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 47
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "KEDA scaler metric / errors",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (scaledObject) (keda_scaler_metrics_value{job=\"keda-operator\"})",
+          "legendFormat": "{{scaledObject}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (scaledObject) (rate(keda_scaler_detail_errors_total{job=\"keda-operator\"}[$__rate_interval]))",
+          "legendFormat": "errors/s {{scaledObject}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 30,
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 47
+      }
+    },
+    {
+      "type": "row",
+      "title": "telemetry-processor",
+      "id": 31,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 55
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_consumed_total[$__rate_interval]))",
+          "legendFormat": "consumed",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_produced_total[$__rate_interval]))",
+          "legendFormat": "produced",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(telemetry_processor_rejected_total[$__rate_interval]))",
+          "legendFormat": "rejected",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 32,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 56
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rejections by reason",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (reason) (rate(telemetry_processor_rejected_total[$__rate_interval]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "noValue": "No rejections in this range.",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 33,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 56
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency",
+      "description": "batch ack = poll until every record is acknowledged; event age = processed_ts - sensor ts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(telemetry_processor_batch_ack_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "batch ack p95",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(telemetry_processor_batch_ack_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "batch ack p50",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(telemetry_processor_event_age_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "event age p95",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 34,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 56
+      }
+    },
+    {
+      "type": "row",
+      "title": "consensus",
+      "id": 35,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Throughput",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_received_total[$__rate_interval]))",
+          "legendFormat": "detections received",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_vehicles_total[$__rate_interval]))",
+          "legendFormat": "vehicles",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_duplicates_total[$__rate_interval]))",
+          "legendFormat": "duplicates",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_lost_total[$__rate_interval]))",
+          "legendFormat": "lost",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(consensus_dropped_total[$__rate_interval]))",
+          "legendFormat": "dropped",
+          "refId": "E"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 36,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 65
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Event age",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(consensus_event_age_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(consensus_event_age_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 37,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 65
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "State",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(consensus_tunnels)",
+          "legendFormat": "tunnels",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(consensus_tunnels_calibrated)",
+          "legendFormat": "calibrated",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(consensus_pending)",
+          "legendFormat": "pending detections",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(consensus_ready)",
+          "legendFormat": "ready pods",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 38,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 65
+      }
+    },
+    {
+      "type": "row",
+      "title": "ClickHouse",
+      "id": 39,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Rows/s",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_InsertedRows{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "inserted rows",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_KafkaRowsRead{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "Kafka rows read",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(ClickHouseProfileEvents_KafkaRowsRejected{job=\"clickhouse\"}[$__rate_interval]))",
+          "legendFormat": "Kafka rows rejected",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 40,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 74
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "ClickHouse consumer lag",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (consumergroup) (clamp_min(kafka_consumergroup_lag{job=\"kafka-exporter\",namespace=\"iot-pipeline\",consumergroup=~\"clickhouse-.+\"}, 0))",
+          "legendFormat": "{{consumergroup}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 41,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 74
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "End-to-end latency (iot.detections)",
+      "description": "sensor -> TBMQ, TBMQ -> telemetry-processor, TBMQ -> ClickHouse insert (ClickHouse SQL).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "rawSql": "SELECT $__timeInterval(ts) AS time,\n  quantile(0.95)(mqtt_latency_ms) / 1000 AS mqtt_p95,\n  quantile(0.95)(process_latency_ms) / 1000 AS processor_p95,\n  quantile(0.95)(ingest_latency_ms) / 1000 AS clickhouse_p95\nFROM iot.detections\nWHERE $__timeFilter(ts)\nGROUP BY time\nORDER BY time",
+          "format": 0,
+          "queryType": "timeseries",
+          "pluginVersion": "4.21.3",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 42,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 74
+      }
+    },
+    {
+      "type": "row",
+      "title": "Logs",
+      "id": 43,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 82
+      },
+      "panels": []
+    },
+    {
+      "type": "logs",
+      "title": "Pipeline errors (VictoriaLogs)",
+      "description": "",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "VictoriaLogs"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No errors, exceptions or tracebacks in this range."
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "VictoriaLogs"
+          },
+          "expr": "kubernetes.pod_namespace:in(\"iot-pipeline\",\"thingsboard-mqtt-broker\",\"iot-storage\") AND (i(error) OR i(exception) OR i(traceback))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "maxLines": 200,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "prettifyLogMessage": false
+      },
+      "id": 44,
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 83
+      }
+    }
+  ]
+}

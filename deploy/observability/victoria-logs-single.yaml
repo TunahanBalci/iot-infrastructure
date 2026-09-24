@@ -1,0 +1,86 @@
+# victoria-logs-single (chart 0.13.9, VictoriaLogs v1.52.0) + Vector agent (subchart vector 0.57, Vector 0.57.0).
+# Release "vlogs" in namespace monitoring. Retention and PVC size come from the install step (--set).
+#   VictoriaLogs  http://vlogs-server.monitoring.svc:9428   (UI /select/vmui, OTLP /insert/opentelemetry/v1/logs)
+#   Vector        DaemonSet vlogs-vector: every pod log (kubernetes_logs) -> /insert/elasticsearch
+server:
+  fullnameOverride: vlogs-server
+  retentionPeriod: 3d
+  retentionDiskSpaceUsage: 4           # GiB; oldest days are dropped before the PVC fills up
+  persistentVolume:
+    enabled: true
+    storageClassName: local-path
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 20m
+      memory: 96Mi
+    limits:
+      memory: 384Mi                        # 256Mi ran at 89% with 3d of logs
+  vmServiceScrape:
+    enabled: true
+
+vector:
+  enabled: true
+  fullnameOverride: vlogs-vector
+  role: Agent
+  resources:
+    requests:
+      cpu: 20m
+      memory: 96Mi
+    limits:
+      memory: 384Mi                        # headroom for the initial glob scan of /var/log/pods
+  customConfig:
+    data_dir: /vector-data-dir
+    api:
+      enabled: false
+    sources:
+      k8s:
+        type: kubernetes_logs              # the chart labels Vector's own pods vector.dev/exclude=true
+        # kubelet keeps one log file per container *restart* until the pod object is deleted, so a pod
+        # that has crash-looped for days leaves hundreds behind (1135 files here after the node-IP and
+        # DNS incidents). Vector fingerprints every file it globs, and that is what pushed the agent
+        # past its memory limit — not the log volume, which is a few hundred lines a minute. Files
+        # nobody has written to for an hour are dead container instances: skip them. One that starts
+        # being written again is picked up by the next glob.
+        ignore_older_secs: 3600
+      internal_metrics:
+        type: internal_metrics
+        scrape_interval_secs: 30
+    transforms:
+      parser:
+        type: remap
+        inputs: [k8s]
+        source: |
+          .log = parse_json(.message) ?? .message
+          del(.message)
+          # High-cardinality Kubernetes metadata that nobody searches by.
+          del(.kubernetes.pod_uid)
+          del(.kubernetes.pod_annotations)
+          del(.kubernetes.namespace_labels)
+          del(.kubernetes.node_labels)
+          del(.kubernetes.container_id)
+          del(.file)
+    sinks:
+      exporter:
+        type: prometheus_exporter
+        address: 0.0.0.0:9090
+        inputs: [internal_metrics]
+      vlogs:
+        type: elasticsearch
+        inputs: [parser]
+        mode: bulk
+        api_version: v8
+        compression: gzip
+        healthcheck:
+          enabled: false
+        buffer:
+          type: memory
+          max_events: 2000
+          when_full: drop_newest       # never back-pressure the node; drops show in vector_buffer_discarded_events_total
+        request:
+          headers:
+            VL-Time-Field: timestamp
+            VL-Stream-Fields: stream,kubernetes.pod_namespace,kubernetes.container_name,kubernetes.pod_name
+            VL-Msg-Field: message,msg,_msg,log.msg,log.message,log
+            AccountID: "0"
+            ProjectID: "0"

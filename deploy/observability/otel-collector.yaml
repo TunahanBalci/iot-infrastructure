@@ -1,0 +1,88 @@
+# opentelemetry-collector (chart 0.173.1, collector 0.160.0, "k8s" distribution). Release "otel-collector"
+# in namespace monitoring.
+#   Service otel-collector.monitoring.svc: OTLP gRPC 4317, OTLP HTTP 4318, self-metrics 8888
+# Pipelines: traces -> VictoriaTraces, metrics -> VictoriaMetrics (OTLP ingestion), logs -> VictoriaLogs.
+mode: deployment
+fullnameOverride: otel-collector
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-k8s
+command:
+  name: otelcol-k8s
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 48Mi
+  limits:
+    memory: 192Mi
+useGOMEMLIMIT: true
+
+ports:
+  otlp:
+    enabled: true
+  otlp-http:
+    enabled: true
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+  metrics:
+    enabled: true          # self-metrics on 8888, scraped by vmagent (deploy/observability/scrapes.yaml)
+
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    prometheus: null       # self-metrics are scraped, not pushed through the pipeline
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: 80
+      spike_limit_percentage: 20
+    batch:
+      send_batch_size: 1024
+      send_batch_max_size: 2048
+      timeout: 5s
+  exporters:
+    debug: null
+    otlphttp/victoriatraces:
+      traces_endpoint: http://vtraces-server.monitoring.svc:10428/insert/opentelemetry/v1/traces
+      compression: gzip
+      sending_queue:
+        queue_size: 500
+    otlphttp/victoriametrics:
+      metrics_endpoint: http://vmsingle-vm.monitoring.svc:8428/opentelemetry/v1/metrics
+      compression: gzip
+      sending_queue:
+        queue_size: 500
+    otlphttp/victorialogs:
+      logs_endpoint: http://vlogs-server.monitoring.svc:9428/insert/opentelemetry/v1/logs
+      compression: gzip
+      sending_queue:
+        queue_size: 500
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlphttp/victoriatraces]
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlphttp/victoriametrics]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlphttp/victorialogs]

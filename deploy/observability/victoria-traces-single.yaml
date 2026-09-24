@@ -1,0 +1,21 @@
+# victoria-traces-single (chart 0.1.11, VictoriaTraces v0.11.0). Release "vtraces" in namespace monitoring.
+# Retention and PVC size come from the install step (--set).
+#   VictoriaTraces  http://vtraces-server.monitoring.svc:10428
+#     OTLP/HTTP ingest  /insert/opentelemetry/v1/traces   (fed by otel-collector)
+#     Jaeger query API  /select/jaeger                     (Grafana datasource "VictoriaTraces")
+server:
+  fullnameOverride: vtraces-server
+  retentionPeriod: 3d
+  retentionDiskSpaceUsage: 1           # GiB
+  persistentVolume:
+    enabled: true
+    storageClassName: local-path
+    size: 2Gi
+  resources:
+    requests:
+      cpu: 10m
+      memory: 48Mi
+    limits:
+      memory: 192Mi
+  vmServiceScrape:
+    enabled: true
