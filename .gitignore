@@ -5,3 +5,4 @@ config.local.env
 .state/
 __pycache__/
 *.egg-info/
+graphify-out/
